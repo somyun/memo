@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>메모</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Courier New', monospace;
+      background: #f5f0e8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 640px;
+      padding: 24px;
+    }
+
+    h1 {
+      font-size: 13px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #999;
+      margin-bottom: 16px;
+    }
+
+    #memo {
+      width: 100%;
+      height: 320px;
+      padding: 16px;
+      font-family: 'Courier New', monospace;
+      font-size: 15px;
+      line-height: 1.7;
+      border: 1px solid #ccc;
+      background: #fff;
+      resize: vertical;
+      outline: none;
+      color: #222;
+    }
+
+    #memo:focus { border-color: #888; }
+
+    .buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    button {
+      padding: 10px 20px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      background: #fff;
+      color: #333;
+      transition: background 0.15s;
+    }
+
+    button:hover { background: #eee; }
+
+    #saveBtn  { border-color: #333; }
+    #clearBtn { color: #c00; border-color: #c00; }
+    #clearBtn:hover { background: #fff0f0; }
+
+    #status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #888;
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>memo</h1>
+  <textarea id="memo" placeholder="여기에 메모를 입력하세요..."></textarea>
+  <div class="buttons">
+    <button id="saveBtn"  onclick="saveMemo()">저장</button>
+    <button id="clearBtn" onclick="clearMemo()">삭제</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<script>
+  // ====== 설정 (여기만 바꾸세요) ======
+  const BIN_ID  = "여기에_BIN_ID";
+  const API_KEY = "여기에_ACCESS_KEY";
+  // =====================================
+
+  const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+  const HEADERS  = { "Content-Type": "application/json", "X-Access-Key": API_KEY };
+
+  function setStatus(msg) {
+    document.getElementById("status").textContent = msg;
+  }
+
+  // 페이지 로드 시 메모 불러오기
+  window.onload = async function () {
+    setStatus("불러오는 중...");
+    try {
+      const res = await fetch(BASE_URL + "/latest", {
+        headers: { "X-Access-Key": API_KEY, "X-Bin-Meta": "false" }
+      });
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      document.getElementById("memo").value = data.memo || "";
+      setStatus(data.memo ? "저장된 메모를 불러왔습니다." : "");
+    } catch (e) {
+      setStatus("불러오기 실패: BIN_ID / API_KEY를 확인하세요.");
+    }
+  };
+
+  // 저장
+  async function saveMemo() {
+    const text = document.getElementById("memo").value;
+    setStatus("저장 중...");
+    try {
+      const res = await fetch(BASE_URL, {
+        method: "PUT",
+        headers: HEADERS,
+        body: JSON.stringify({ memo: text })
+      });
+      if (!res.ok) throw new Error(res.status);
+      setStatus("저장되었습니다.");
+    } catch (e) {
+      setStatus("저장 실패: " + e.message);
+    }
+  }
+
+  // 삭제
+  async function clearMemo() {
+    if (!confirm("메모를 삭제할까요?")) return;
+    document.getElementById("memo").value = "";
+    setStatus("삭제 중...");
+    try {
+      const res = await fetch(BASE_URL, {
+        method: "PUT",
+        headers: HEADERS,
+        body: JSON.stringify({ memo: "" })
+      });
+      if (!res.ok) throw new Error(res.status);
+      setStatus("삭제되었습니다.");
+    } catch (e) {
+      setStatus("삭제 실패: " + e.message);
+    }
+  }
+</script>
+</body>
+</html>
