@@ -7,151 +7,553 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: 'Courier New', monospace;
-      background: #f5f0e8;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    :root {
+      --bg:          #ede8dd;
+      --card:        #fef9c3;
+      --card-hover:  #fefacc;
+      --card-shadow: 2px 4px 10px rgba(0,0,0,0.11), 0 1px 2px rgba(0,0,0,0.07);
+      --card-border: rgba(0,0,0,0.07);
+      --text:        #2b2b2b;
+      --muted:       #aaa;
+      --danger:      #cc2200;
+      --font:        'Courier New', monospace;
     }
 
-    .container {
-      width: 100%;
-      max-width: 640px;
-      padding: 24px;
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      min-height: 100vh;
+      padding: 28px 24px 48px;
+    }
+
+    /* subtle paper texture */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 31px,
+          rgba(0,0,0,0.025) 31px,
+          rgba(0,0,0,0.025) 32px
+        );
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    header {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 20px;
     }
 
     h1 {
-      font-size: 13px;
-      letter-spacing: 0.2em;
+      font-size: 12px;
+      letter-spacing: 0.25em;
       text-transform: uppercase;
-      color: #999;
-      margin-bottom: 16px;
+      color: var(--muted);
     }
-
-    #memo {
-      width: 100%;
-      height: 320px;
-      padding: 16px;
-      font-family: 'Courier New', monospace;
-      font-size: 15px;
-      line-height: 1.7;
-      border: 1px solid #ccc;
-      background: #fff;
-      resize: vertical;
-      outline: none;
-      color: #222;
-    }
-
-    #memo:focus { border-color: #888; }
-
-    .buttons {
-      display: flex;
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    button {
-      padding: 10px 20px;
-      font-family: 'Courier New', monospace;
-      font-size: 13px;
-      letter-spacing: 0.1em;
-      cursor: pointer;
-      border: 1px solid #ccc;
-      background: #fff;
-      color: #333;
-      transition: background 0.15s;
-    }
-
-    button:hover { background: #eee; }
-
-    #saveBtn  { border-color: #333; }
-    #clearBtn { color: #c00; border-color: #c00; }
-    #clearBtn:hover { background: #fff0f0; }
 
     #status {
-      margin-top: 10px;
-      font-size: 12px;
-      color: #888;
-      min-height: 16px;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      min-height: 14px;
+      transition: opacity 0.3s;
     }
+
+    /* ── Grid ── */
+    .grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 18px;
+      align-items: start;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      box-shadow: var(--card-shadow);
+      padding: 10px 12px 12px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: box-shadow 0.15s, transform 0.15s;
+      animation: cardIn 0.18s ease both;
+    }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .card:focus-within {
+      box-shadow: 3px 6px 18px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.09);
+    }
+
+    /* tape strip at top */
+    .card::before {
+      content: '';
+      position: absolute;
+      top: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 40px;
+      height: 12px;
+      background: rgba(255,255,200,0.7);
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 1px;
+    }
+
+    .card--empty {
+      border-style: dashed;
+      box-shadow: none;
+      opacity: 0.55;
+    }
+
+    .card--empty::before { display: none; }
+
+    .card--empty:focus-within {
+      border-style: solid;
+      box-shadow: var(--card-shadow);
+      opacity: 1;
+    }
+
+    /* ── Textarea ── */
+    .card-text {
+      width: 100%;
+      min-height: 218px;   /* ~10 lines @ 13px/1.68lh */
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.68;
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: none;
+      color: var(--text);
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .card-text::placeholder { color: #bbb; }
+
+    /* ── Delete button ── */
+    .delete-btn {
+      position: absolute;
+      top: 6px;
+      right: 7px;
+      background: none;
+      border: none;
+      font-size: 15px;
+      color: #ccc;
+      cursor: pointer;
+      line-height: 1;
+      padding: 1px 4px;
+      opacity: 0;
+      transition: opacity 0.12s, color 0.12s;
+      z-index: 2;
+    }
+
+    .card:hover .delete-btn,
+    .card:focus-within .delete-btn { opacity: 1; }
+    .delete-btn:hover { color: var(--danger); }
+
+    /* ── Images ── */
+    .card-images { display: flex; flex-direction: column; gap: 6px; }
+
+    .img-wrap {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .img-wrap img {
+      width: 100%;
+      display: block;
+      cursor: zoom-in;
+      transition: opacity 0.2s;
+    }
+
+    .img-wrap img:hover { opacity: 0.9; }
+
+    .remove-img {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(0,0,0,0.52);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+
+    .img-wrap:hover .remove-img { opacity: 1; }
+
+    /* uploading placeholder */
+    .upload-placeholder {
+      width: 100%;
+      height: 60px;
+      background: rgba(0,0,0,0.04);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      border: 1px dashed #ccc;
+    }
+
+    /* ── Lightbox ── */
+    #lightbox {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.82);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      cursor: zoom-out;
+    }
+
+    #lightbox.open { display: flex; }
+    #lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; }
   </style>
 </head>
 <body>
-<div class="container">
+
+<header>
   <h1>memo</h1>
-  <textarea id="memo" placeholder="여기에 메모를 입력하세요..."></textarea>
-  <div class="buttons">
-    <button id="saveBtn"  onclick="saveMemo()">저장</button>
-    <button id="clearBtn" onclick="clearMemo()">삭제</button>
-  </div>
   <div id="status"></div>
+</header>
+
+<div class="grid" id="grid"></div>
+
+<div id="lightbox">
+  <img id="lightbox-img" src="" alt="">
 </div>
 
 <script>
-  // ====== 설정 (여기만 바꾸세요) ======
-  const BIN_ID  = "6a0226fe250b1311c3363d2e";
-  const API_KEY = "$2a$10$O19P5kBlpzUro1ntia5wSeokkANtoGecK5BzwGJMBUpCs8i20Bs3S";
-  // =====================================
+  /* ═══════════════════════════════════════
+     설정 — 여기만 수정하세요
+  ═══════════════════════════════════════ */
+  const JSONBIN_ID  = "6a0226fe250b1311c3363d2e";
+  const JSONBIN_KEY = "$2a$10$O19P5kBlpzUro1ntia5wSeokkANtoGecK5BzwGJMBUpCs8i20Bs3S";
+  const IMGBB_KEY   = "YOUR_IMGBB_API_KEY"; // imgbb.com에서 API 키 발급 후 입력
+  /* ═══════════════════════════════════════ */
 
-  const BASE_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-  const HEADERS  = { "Content-Type": "application/json", "X-Access-Key": API_KEY };
+  const BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`;
+  const JB_HEADERS = { "Content-Type": "application/json", "X-Access-Key": JSONBIN_KEY };
 
-  function setStatus(msg) {
-    document.getElementById("status").textContent = msg;
+  let memos = [];
+  let saveTimer = null;
+
+  /* ── Utilities ── */
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const setStatus = msg => document.getElementById("status").textContent = msg;
+
+  function newMemoObj(text = '', images = []) {
+    return { id: uid(), text, images, created: Date.now(), updated: Date.now() };
   }
 
-  // 페이지 로드 시 메모 불러오기
-  window.onload = async function () {
+  /* ── Load ── */
+  window.onload = async () => {
     setStatus("불러오는 중...");
     try {
-      const res = await fetch(BASE_URL + "/latest", {
-        headers: { "X-Access-Key": API_KEY, "X-Bin-Meta": "false" }
+      const res = await fetch(`${BASE_URL}/latest`, {
+        headers: { "X-Access-Key": JSONBIN_KEY, "X-Bin-Meta": "false" }
       });
       if (!res.ok) throw new Error(res.status);
       const data = await res.json();
-      document.getElementById("memo").value = data.memo || "";
-      setStatus(data.memo ? "저장된 메모를 불러왔습니다." : "");
-    } catch (e) {
-      setStatus("불러오기 실패: BIN_ID / API_KEY를 확인하세요.");
+
+      // 기존 단일 memo 형식 마이그레이션
+      if (Array.isArray(data.memos)) {
+        memos = data.memos;
+      } else if (typeof data.memo === "string" && data.memo) {
+        memos = [newMemoObj(data.memo)];
+      } else {
+        memos = [];
+      }
+
+      renderAll();
+      setStatus("");
+    } catch (err) {
+      setStatus("불러오기 실패 — BIN_ID / API_KEY를 확인하세요.");
+      renderAll();
     }
   };
 
-  // 저장
-  async function saveMemo() {
-    const text = document.getElementById("memo").value;
+  /* ── Save (debounced) ── */
+  function scheduleSave() {
+    clearTimeout(saveTimer);
     setStatus("저장 중...");
+    saveTimer = setTimeout(persist, 1400);
+  }
+
+  async function persist() {
     try {
       const res = await fetch(BASE_URL, {
         method: "PUT",
-        headers: HEADERS,
-        body: JSON.stringify({ memo: text })
+        headers: JB_HEADERS,
+        body: JSON.stringify({ memos })
       });
       if (!res.ok) throw new Error(res.status);
-      setStatus("저장되었습니다.");
-    } catch (e) {
-      setStatus("저장 실패: " + e.message);
+      setStatus("저장됨");
+      setTimeout(() => setStatus(""), 2200);
+    } catch (err) {
+      setStatus("저장 실패: " + err.message);
     }
   }
 
-  // 삭제
-  async function clearMemo() {
-    if (!confirm("메모를 삭제할까요?")) return;
-    document.getElementById("memo").value = "";
-    setStatus("삭제 중...");
-    try {
-      const res = await fetch(BASE_URL, {
-        method: "PUT",
-        headers: HEADERS,
-        body: JSON.stringify({ memo: "" })
-      });
-      if (!res.ok) throw new Error(res.status);
-      setStatus("삭제되었습니다.");
-    } catch (e) {
-      setStatus("삭제 실패: " + e.message);
+  /* ── Render ── */
+  function renderAll() {
+    const grid = document.getElementById("grid");
+    grid.innerHTML = "";
+    memos.forEach(m => grid.appendChild(buildCard(m)));
+    grid.appendChild(buildEmptyCard());
+  }
+
+  /* Existing memo card */
+  function buildCard(memo) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.dataset.id = memo.id;
+
+    // delete button
+    const del = document.createElement("button");
+    del.className = "delete-btn";
+    del.textContent = "×";
+    del.title = "삭제";
+    del.onclick = () => {
+      if (!confirm("이 메모를 삭제할까요?")) return;
+      memos = memos.filter(m => m.id !== memo.id);
+      card.remove();
+      scheduleSave();
+    };
+
+    // textarea
+    const ta = buildTextarea(memo.text);
+    ta.oninput = () => {
+      memo.text = ta.value;
+      memo.updated = Date.now();
+      autoGrow(ta);
+      scheduleSave();
+    };
+    ta.addEventListener("paste", e => handleImagePaste(e, memo, card));
+
+    // images
+    const imgArea = document.createElement("div");
+    imgArea.className = "card-images";
+    memo.images.forEach(url => imgArea.appendChild(buildImgWrap(url, memo)));
+
+    card.appendChild(del);
+    card.appendChild(ta);
+    card.appendChild(imgArea);
+
+    // grow on next tick (after mount)
+    requestAnimationFrame(() => autoGrow(ta));
+    return card;
+  }
+
+  /* Blank new-memo card */
+  function buildEmptyCard() {
+    const card = document.createElement("div");
+    card.className = "card card--empty";
+    card.dataset.id = "";
+
+    const ta = buildTextarea("");
+    ta.placeholder = "새 메모...";
+
+    const imgArea = document.createElement("div");
+    imgArea.className = "card-images";
+
+    // Promote to real card on first input
+    const promote = () => {
+      if (!ta.value.trim() && card.querySelector(".card-images").children.length === 0) return;
+      const memo = newMemoObj(ta.value);
+      memos.push(memo);
+
+      card.className = "card";
+      card.dataset.id = memo.id;
+
+      const del = document.createElement("button");
+      del.className = "delete-btn";
+      del.textContent = "×";
+      del.title = "삭제";
+      del.onclick = () => {
+        if (!confirm("이 메모를 삭제할까요?")) return;
+        memos = memos.filter(m => m.id !== memo.id);
+        card.remove();
+        scheduleSave();
+      };
+      card.insertBefore(del, ta);
+
+      // replace input handler
+      ta.oninput = () => {
+        memo.text = ta.value;
+        memo.updated = Date.now();
+        autoGrow(ta);
+        scheduleSave();
+      };
+      ta.removeEventListener("input", onEmptyInput);
+      ta.addEventListener("paste", e => handleImagePaste(e, memo, card));
+
+      // swap image-paste handler
+      imgArea.dataset.memoId = memo.id;
+
+      document.getElementById("grid").appendChild(buildEmptyCard());
+      scheduleSave();
+    };
+
+    const onEmptyInput = () => { promote(); };
+    ta.addEventListener("input", onEmptyInput);
+    ta.addEventListener("paste", e => {
+      // if image is pasted into empty card, promote first
+      const items = e.clipboardData?.items || [];
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          // promote without text
+          promote();
+          // wait a tick, then upload into newly-promoted card
+          const memo = memos[memos.length - 1];
+          uploadImage(file, memo, card);
+          return;
+        }
+      }
+    });
+
+    card.appendChild(ta);
+    card.appendChild(imgArea);
+    return card;
+  }
+
+  /* Shared textarea builder */
+  function buildTextarea(value) {
+    const ta = document.createElement("textarea");
+    ta.className = "card-text";
+    ta.value = value;
+    ta.rows = 1;
+    ta.oninput = () => autoGrow(ta);
+    return ta;
+  }
+
+  /* Auto-grow textarea */
+  function autoGrow(ta) {
+    ta.style.height = "auto";
+    const min = 218; // ~10 lines
+    ta.style.height = Math.max(min, ta.scrollHeight) + "px";
+  }
+
+  /* Image wrap element */
+  function buildImgWrap(url, memo) {
+    const wrap = document.createElement("div");
+    wrap.className = "img-wrap";
+
+    const img = document.createElement("img");
+    img.src = url;
+    img.loading = "lazy";
+    img.alt = "첨부 이미지";
+    img.onclick = () => openLightbox(url);
+
+    const rmBtn = document.createElement("button");
+    rmBtn.className = "remove-img";
+    rmBtn.textContent = "×";
+    rmBtn.title = "이미지 제거";
+    rmBtn.onclick = () => {
+      memo.images = memo.images.filter(u => u !== url);
+      wrap.remove();
+      scheduleSave();
+    };
+
+    wrap.appendChild(img);
+    wrap.appendChild(rmBtn);
+    return wrap;
+  }
+
+  /* ── Image paste handler ── */
+  async function handleImagePaste(e, memo, card) {
+    const items = e.clipboardData?.items || [];
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        await uploadImage(file, memo, card);
+        return;
+      }
     }
   }
+
+  /* ── ImgBB upload ── */
+  async function uploadImage(file, memo, card) {
+    const imgArea = card.querySelector(".card-images");
+
+    // placeholder while uploading
+    const ph = document.createElement("div");
+    ph.className = "upload-placeholder";
+    ph.textContent = "이미지 업로드 중...";
+    imgArea.appendChild(ph);
+
+    try {
+      const base64 = await fileToBase64(file);
+      const form = new FormData();
+      form.append("image", base64.split(",")[1]);
+
+      const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_KEY}`, {
+        method: "POST",
+        body: form
+      });
+      if (!res.ok) throw new Error("ImgBB " + res.status);
+      const json = await res.json();
+      const url = json.data.url;
+
+      memo.images.push(url);
+      memo.updated = Date.now();
+
+      ph.replaceWith(buildImgWrap(url, memo));
+      scheduleSave();
+    } catch (err) {
+      ph.textContent = "업로드 실패";
+      setTimeout(() => ph.remove(), 3000);
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload  = () => res(r.result);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+  }
+
+  /* ── Lightbox ── */
+  function openLightbox(url) {
+    const lb = document.getElementById("lightbox");
+    document.getElementById("lightbox-img").src = url;
+    lb.classList.add("open");
+  }
+
+  document.getElementById("lightbox").onclick = function () {
+    this.classList.remove("open");
+    document.getElementById("lightbox-img").src = "";
+  };
 </script>
 </body>
 </html>
