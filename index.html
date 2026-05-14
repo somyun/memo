@@ -254,7 +254,11 @@
   ═══════════════════════════════════════ */
   const JSONBIN_ID  = "6a0226fe250b1311c3363d2e";
   const JSONBIN_KEY = "$2a$10$O19P5kBlpzUro1ntia5wSeokkANtoGecK5BzwGJMBUpCs8i20Bs3S";
-  const IMGBB_KEY   = "YOUR_IMGBB_API_KEY"; // imgbb.com에서 API 키 발급 후 입력
+  
+  const GITHUB_TOKEN = "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";
+  const GITHUB_OWNER = "somyun";
+  const GITHUB_REPO  = "memo";
+  const GITHUB_BRANCH = "main";
   /* ═══════════════════════════════════════ */
 
   const BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`;
@@ -500,47 +504,59 @@
     }
   }
 
-  /* ── ImgBB upload ── */
+  /* ── GitHub 이미지 업로드 ── */
   async function uploadImage(file, memo, card) {
     const imgArea = card.querySelector(".card-images");
-
-    // placeholder while uploading
+  
     const ph = document.createElement("div");
     ph.className = "upload-placeholder";
     ph.textContent = "이미지 업로드 중...";
     imgArea.appendChild(ph);
-
+  
     try {
       const base64 = await fileToBase64(file);
-      const form = new FormData();
-      form.append("image", base64.split(",")[1]);
-
-      const res = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_KEY}`, {
-        method: "POST",
-        body: form
-      });
-      if (!res.ok) throw new Error("ImgBB " + res.status);
-      const json = await res.json();
-      const url = json.data.url;
-
-      memo.images.push(url);
+      const pureBase64 = base64.split(",")[1];
+  
+      // 파일명 생성
+      const ext = file.name.split(".").pop() || "png";
+      const fileName = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  
+      const res = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${fileName}`,
+        {
+          method: "PUT",
+          headers: {
+            "Authorization": `Bearer ${GITHUB_TOKEN}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message: `Upload image ${fileName}`,
+            content: pureBase64,
+            branch: GITHUB_BRANCH
+          })
+        }
+      );
+  
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err);
+      }
+  
+      // jsDelivr CDN 사용 (GitHub raw보다 빠르고 CORS 안정적)
+      const imageUrl = `https://cdn.jsdelivr.net/gh/${GITHUB_OWNER}/${GITHUB_REPO}@${GITHUB_BRANCH}/${fileName}`;
+  
+      memo.images.push(imageUrl);
       memo.updated = Date.now();
-
-      ph.replaceWith(buildImgWrap(url, memo));
+  
+      ph.replaceWith(buildImgWrap(imageUrl, memo));
       scheduleSave();
+  
     } catch (err) {
+      console.error(err);
       ph.textContent = "업로드 실패";
       setTimeout(() => ph.remove(), 3000);
     }
-  }
-
-  function fileToBase64(file) {
-    return new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload  = () => res(r.result);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
   }
 
   /* ── Lightbox ── */
