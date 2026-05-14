@@ -255,11 +255,13 @@
   const JSONBIN_ID  = "6a0226fe250b1311c3363d2e";
   const JSONBIN_KEY = "$2a$10$O19P5kBlpzUro1ntia5wSeokkANtoGecK5BzwGJMBUpCs8i20Bs3S";
   
-  const GITHUB_TOKEN = "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";
   const GITHUB_OWNER = "somyun";
   const GITHUB_REPO  = "memo";
   const GITHUB_BRANCH = "main";
+  const TOKEN_BIN_ID = "6a0580f2c0954111d81febe9";
   /* ═══════════════════════════════════════ */
+
+let GITHUB_TOKEN = null;
 
   const BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`;
   const JB_HEADERS = { "Content-Type": "application/json", "X-Access-Key": JSONBIN_KEY };
@@ -514,11 +516,12 @@
     imgArea.appendChild(ph);
   
     try {
+      const token = await loadGithubToken();
+  
       const base64 = await fileToBase64(file);
       const pureBase64 = base64.split(",")[1];
   
-      // 파일명 생성
-      const ext = file.name.split(".").pop() || "png";
+      const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
       const fileName = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
   
       const res = await fetch(
@@ -526,7 +529,7 @@
         {
           method: "PUT",
           headers: {
-            "Authorization": `Bearer ${GITHUB_TOKEN}`,
+            "Authorization": `token ${token}`,
             "Accept": "application/vnd.github+json",
             "Content-Type": "application/json"
           },
@@ -543,7 +546,6 @@
         throw new Error(err);
       }
   
-      // jsDelivr CDN 사용 (GitHub raw보다 빠르고 CORS 안정적)
       const imageUrl = `https://cdn.jsdelivr.net/gh/${GITHUB_OWNER}/${GITHUB_REPO}@${GITHUB_BRANCH}/${fileName}`;
   
       memo.images.push(imageUrl);
@@ -582,6 +584,28 @@
       reader.readAsDataURL(file);
     });
   }
+
+  /* ── GitHub 토큰 불러오기 ── */
+  async function loadGithubToken() {
+    if (GITHUB_TOKEN) return GITHUB_TOKEN;
+  
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${TOKEN_BIN_ID}/latest`, {
+      headers: {
+        "X-Access-Key": JSONBIN_KEY,
+        "X-Bin-Meta": "false"
+      }
+    });
+  
+    if (!res.ok) throw new Error("토큰 로드 실패");
+  
+    const data = await res.json();
+  
+    if (!data.token) throw new Error("토큰 없음");
+  
+    GITHUB_TOKEN = data.token;
+    return GITHUB_TOKEN;
+  }
+  
 </script>
 </body>
 </html>
