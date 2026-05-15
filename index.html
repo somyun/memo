@@ -298,6 +298,8 @@
     #lightbox.open { display: flex; }
     #lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; }
   </style>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
@@ -314,24 +316,28 @@
 
 <script>
   /* ═══════════════════════════════════════
-     설정 — 여기만 수정하세요
+     설정
   ═══════════════════════════════════════ */
-  const JSONBIN_ID  = "6a0226fe250b1311c3363d2e";
-  const JSONBIN_KEY = "$2a$10$O19P5kBlpzUro1ntia5wSeokkANtoGecK5BzwGJMBUpCs8i20Bs3S";
-  
   const GITHUB_OWNER = "somyun";
   const GITHUB_REPO  = "memo";
   const GITHUB_BRANCH = "main";
-  const TOKEN_BIN_ID = "6a0580f2c0954111d81febe9";
+
+  firebase.initializeApp({
+    apiKey: "AIzaSyBdJN2qn4Gox8jpIm8ZfPxzeoIU0G_eA-o",
+    authDomain: "memo-3a7c8.firebaseapp.com",
+    projectId: "memo-3a7c8",
+    storageBucket: "memo-3a7c8.firebasestorage.app",
+    messagingSenderId: "674466200117",
+    appId: "1:674466200117:web:02cb1572cd0a2597ffcf7c"
+  });
+  const db = firebase.firestore();
   /* ═══════════════════════════════════════ */
 
-let GITHUB_TOKEN = null;
-
-  const BASE_URL = `https://api.jsonbin.io/v3/b/${JSONBIN_ID}`;
-  const JB_HEADERS = { "Content-Type": "application/json", "X-Access-Key": JSONBIN_KEY };
-
+  let GITHUB_TOKEN = null;
   let memos = [];
   let saveTimer = null;
+  let localSaveInProgress = false;
+  let isFirstSnapshot = true;
 
   /* ── Utilities ── */
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -344,58 +350,64 @@ let GITHUB_TOKEN = null;
   }
 
   function newMemoObj(text = '', images = [], files = []) {
-    return { id: uid(), text, images, files, created: Date.now(), updated: Date.now() };
+    return { id: uid(), text, images, files, pinned: false, created: Date.now(), updated: Date.now() };
   }
 
-  /* ── Load ── */
-  window.onload = async () => {
+  /* ── Load (Firestore 실시간 리스너) ── */
+  window.onload = () => {
     setStatus("불러오는 중...");
-    try {
-      const res = await fetch(`${BASE_URL}/latest`, {
-        headers: { "X-Access-Key": JSONBIN_KEY, "X-Bin-Meta": "false" }
+    db.collection("memos").onSnapshot((snapshot) => {
+      memos = snapshot.docs.map(doc => {
+        const data = doc.data();
+        if (!Array.isArray(data.files)) data.files = [];
+        if (typeof data.pinned !== "boolean") data.pinned = false;
+        return { ...data, id: doc.id };
       });
-      if (!res.ok) throw new Error(res.status);
-      const data = await res.json();
 
-      // 기존 단일 memo 형식 마이그레이션
-      if (Array.isArray(data.memos)) {
-        memos = data.memos;
-      } else if (typeof data.memo === "string" && data.memo) {
-        memos = [newMemoObj(data.memo)];
-      } else {
-        memos = [];
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        renderAll();
+        setStatus("");
+        return;
       }
-      // files 배열이 없는 기존 메모 마이그레이션
-      memos.forEach(m => { if (!Array.isArray(m.files)) m.files = []; });
 
+      // 로컬 저장 직후의 onSnapshot 콜백은 무시 (깜빡임 방지)
+      if (!localSaveInProgress) {
+        renderAll();
+      }
+    }, (error) => {
+      setStatus("연결 실패: " + error.message);
       renderAll();
-      setStatus("");
-    } catch (err) {
-      setStatus("불러오기 실패 — BIN_ID / API_KEY를 확인하세요.");
-      renderAll();
-    }
+    });
   };
 
-  /* ── Save (debounced) ── */
-  function scheduleSave() {
+  /* ── Save (개별 메모 단위, debounced) ── */
+  function scheduleSave(memo) {
     clearTimeout(saveTimer);
     setStatus("저장 중...");
-    saveTimer = setTimeout(persist, 1400);
+    saveTimer = setTimeout(() => persistMemo(memo), 1400);
   }
 
-  async function persist() {
+  async function persistMemo(memo) {
+    localSaveInProgress = true;
     try {
-      const res = await fetch(BASE_URL, {
-        method: "PUT",
-        headers: JB_HEADERS,
-        body: JSON.stringify({ memos })
-      });
-      if (!res.ok) throw new Error(res.status);
+      await db.collection("memos").doc(memo.id).set(memo);
       setStatus("저장됨");
       setTimeout(() => setStatus(""), 2200);
     } catch (err) {
       setStatus("저장 실패: " + err.message);
     }
+    setTimeout(() => { localSaveInProgress = false; }, 500);
+  }
+
+  async function deleteMemo(memoId) {
+    localSaveInProgress = true;
+    try {
+      await db.collection("memos").doc(memoId).delete();
+    } catch (err) {
+      console.error("Firestore 메모 삭제 실패:", err);
+    }
+    setTimeout(() => { localSaveInProgress = false; }, 500);
   }
 
   /* ── Render ── */
@@ -421,7 +433,7 @@ let GITHUB_TOKEN = null;
       if (!confirm("이 메모를 삭제할까요?")) return;
       memos = memos.filter(m => m.id !== memo.id);
       card.remove();
-      scheduleSave();
+      deleteMemo(memo.id);
     };
 
     const dateDiv = document.createElement("div");
@@ -435,7 +447,7 @@ let GITHUB_TOKEN = null;
       memo.updated = Date.now();
       dateDiv.textContent = formatDate(memo.updated);
       autoGrow(ta);
-      scheduleSave();
+      scheduleSave(memo);
     };
     ta.addEventListener("paste", e => handlePaste(e, memo, card, ta));
 
@@ -493,7 +505,7 @@ let GITHUB_TOKEN = null;
         if (!confirm("이 메모를 삭제할까요?")) return;
         memos = memos.filter(m => m.id !== memo.id);
         card.remove();
-        scheduleSave();
+        deleteMemo(memo.id);
       };
 
       const dateDiv = document.createElement("div");
@@ -509,7 +521,7 @@ let GITHUB_TOKEN = null;
         memo.updated = Date.now();
         dateDiv.textContent = formatDate(memo.updated);
         autoGrow(ta);
-        scheduleSave();
+        scheduleSave(memo);
       };
       ta.removeEventListener("input", onEmptyInput);
       ta.addEventListener("paste", e => handlePaste(e, memo, card, ta));
@@ -518,7 +530,7 @@ let GITHUB_TOKEN = null;
       imgArea.dataset.memoId = memo.id;
 
       document.getElementById("grid").appendChild(buildEmptyCard());
-      scheduleSave();
+      scheduleSave(memo);
     };
 
     const onEmptyInput = () => { promote(); };
@@ -584,7 +596,7 @@ let GITHUB_TOKEN = null;
       if (!confirm("이 이미지를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.")) return;
       memo.images = memo.images.filter(u => u !== url);
       wrap.remove();
-      scheduleSave();
+      scheduleSave(memo);
       // GitHub 원본 삭제 (백그라운드)
       deleteGithubFile(url).catch(err => console.warn("GitHub 이미지 삭제 실패:", err));
     };
@@ -618,7 +630,7 @@ let GITHUB_TOKEN = null;
       if (!confirm(`"${fileObj.name}" 첨부를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.`)) return;
       memo.files = memo.files.filter(f => f.url !== fileObj.url);
       wrap.remove();
-      scheduleSave();
+      scheduleSave(memo);
       // GitHub 원본 삭제 (백그라운드)
       deleteGithubFile(fileObj.url).catch(err => console.warn("GitHub 파일 삭제 실패:", err));
     };
@@ -754,7 +766,7 @@ let GITHUB_TOKEN = null;
       imgWrap.querySelector("img").onclick = () => openLightbox(base64);
 
       ph.replaceWith(imgWrap);
-      scheduleSave();
+      scheduleSave(memo);
 
     } catch (err) {
       console.error(err);
@@ -812,7 +824,7 @@ let GITHUB_TOKEN = null;
       if (dateDiv) dateDiv.textContent = formatDate(memo.updated);
 
       ph.replaceWith(buildFileLink(fileObj, memo));
-      scheduleSave();
+      scheduleSave(memo);
       console.log(`[파일 업로드] ${file.name} (${(file.size/1024).toFixed(0)}KB)`);
 
     } catch (err) {
@@ -896,23 +908,16 @@ let GITHUB_TOKEN = null;
     });
   }
 
-  /* ── GitHub 토큰 불러오기 ── */
+  /* ── GitHub 토큰 불러오기 (Firestore) ── */
   async function loadGithubToken() {
     if (GITHUB_TOKEN) return GITHUB_TOKEN;
-  
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${TOKEN_BIN_ID}/latest`, {
-      headers: {
-        "X-Access-Key": JSONBIN_KEY,
-        "X-Bin-Meta": "false"
-      }
-    });
-  
-    if (!res.ok) throw new Error("토큰 로드 실패");
-  
-    const data = await res.json();
-  
+
+    const docSnap = await db.collection("config").doc("github").get();
+    if (!docSnap.exists) throw new Error("GitHub 토큰 설정 없음");
+
+    const data = docSnap.data();
     if (!data.token) throw new Error("토큰 없음");
-  
+
     GITHUB_TOKEN = data.token;
     return GITHUB_TOKEN;
   }
