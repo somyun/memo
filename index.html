@@ -227,6 +227,62 @@
       margin-top: auto;
     }
 
+    /* ── File attachments ── */
+    .card-files {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .file-link {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      padding: 4px 6px;
+      background: rgba(0,0,0,0.04);
+      border-radius: 3px;
+      transition: background 0.12s;
+    }
+
+    .file-link:hover {
+      background: rgba(0,0,0,0.08);
+    }
+
+    .file-link a {
+      color: #3366aa;
+      text-decoration: none;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .file-link a:hover {
+      text-decoration: underline;
+    }
+
+    .file-link .file-icon {
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    .remove-file {
+      background: none;
+      border: none;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0 2px;
+      flex-shrink: 0;
+      transition: color 0.12s;
+    }
+
+    .remove-file:hover {
+      color: var(--danger);
+    }
+
     /* ── Lightbox ── */
     #lightbox {
       display: none;
@@ -287,8 +343,8 @@ let GITHUB_TOKEN = null;
     return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
-  function newMemoObj(text = '', images = []) {
-    return { id: uid(), text, images, created: Date.now(), updated: Date.now() };
+  function newMemoObj(text = '', images = [], files = []) {
+    return { id: uid(), text, images, files, created: Date.now(), updated: Date.now() };
   }
 
   /* ── Load ── */
@@ -309,6 +365,8 @@ let GITHUB_TOKEN = null;
       } else {
         memos = [];
       }
+      // files 배열이 없는 기존 메모 마이그레이션
+      memos.forEach(m => { if (!Array.isArray(m.files)) m.files = []; });
 
       renderAll();
       setStatus("");
@@ -379,16 +437,22 @@ let GITHUB_TOKEN = null;
       autoGrow(ta);
       scheduleSave();
     };
-    ta.addEventListener("paste", e => handleImagePaste(e, memo, card));
+    ta.addEventListener("paste", e => handlePaste(e, memo, card, ta));
 
     // images
     const imgArea = document.createElement("div");
     imgArea.className = "card-images";
     memo.images.forEach(url => imgArea.appendChild(buildImgWrap(url, memo)));
 
+    // files
+    const fileArea = document.createElement("div");
+    fileArea.className = "card-files";
+    memo.files.forEach(f => fileArea.appendChild(buildFileLink(f, memo)));
+
     card.appendChild(del);
     card.appendChild(ta);
     card.appendChild(imgArea);
+    card.appendChild(fileArea);
     card.appendChild(dateDiv);
 
     // grow on next tick (after mount)
@@ -408,9 +472,13 @@ let GITHUB_TOKEN = null;
     const imgArea = document.createElement("div");
     imgArea.className = "card-images";
 
+    const fileArea = document.createElement("div");
+    fileArea.className = "card-files";
+
     // Promote to real card on first input
     const promote = () => {
-      if (!ta.value.trim() && card.querySelector(".card-images").children.length === 0) return;
+      if (!ta.value.trim() && card.querySelector(".card-images").children.length === 0
+          && card.querySelector(".card-files").children.length === 0) return;
       const memo = newMemoObj(ta.value);
       memos.push(memo);
 
@@ -444,9 +512,9 @@ let GITHUB_TOKEN = null;
         scheduleSave();
       };
       ta.removeEventListener("input", onEmptyInput);
-      ta.addEventListener("paste", e => handleImagePaste(e, memo, card));
+      ta.addEventListener("paste", e => handlePaste(e, memo, card, ta));
 
-      // swap image-paste handler
+      // swap paste handler
       imgArea.dataset.memoId = memo.id;
 
       document.getElementById("grid").appendChild(buildEmptyCard());
@@ -456,17 +524,19 @@ let GITHUB_TOKEN = null;
     const onEmptyInput = () => { promote(); };
     ta.addEventListener("input", onEmptyInput);
     ta.addEventListener("paste", e => {
-      // if image is pasted into empty card, promote first
+      // if file/image is pasted into empty card, promote first
       const items = e.clipboardData?.items || [];
       for (const item of items) {
-        if (item.type.startsWith("image/")) {
+        if (item.kind === "file") {
           e.preventDefault();
           const file = item.getAsFile();
-          // promote without text
           promote();
-          // wait a tick, then upload into newly-promoted card
           const memo = memos[memos.length - 1];
-          uploadImage(file, memo, card);
+          if (item.type.startsWith("image/")) {
+            uploadImage(file, memo, card);
+          } else {
+            uploadFile(file, memo, card);
+          }
           return;
         }
       }
@@ -474,6 +544,7 @@ let GITHUB_TOKEN = null;
 
     card.appendChild(ta);
     card.appendChild(imgArea);
+    card.appendChild(fileArea);
     return card;
   }
 
@@ -509,10 +580,13 @@ let GITHUB_TOKEN = null;
     rmBtn.className = "remove-img";
     rmBtn.textContent = "×";
     rmBtn.title = "이미지 제거";
-    rmBtn.onclick = () => {
+    rmBtn.onclick = async () => {
+      if (!confirm("이 이미지를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.")) return;
       memo.images = memo.images.filter(u => u !== url);
       wrap.remove();
       scheduleSave();
+      // GitHub 원본 삭제 (백그라운드)
+      deleteGithubFile(url).catch(err => console.warn("GitHub 이미지 삭제 실패:", err));
     };
 
     wrap.appendChild(img);
@@ -520,14 +594,53 @@ let GITHUB_TOKEN = null;
     return wrap;
   }
 
-  /* ── Image paste handler ── */
-  async function handleImagePaste(e, memo, card) {
+  /* File link element */
+  function buildFileLink(fileObj, memo) {
+    const wrap = document.createElement("div");
+    wrap.className = "file-link";
+
+    const icon = document.createElement("span");
+    icon.className = "file-icon";
+    icon.textContent = "📎";
+
+    const link = document.createElement("a");
+    link.href = fileObj.url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = fileObj.name;
+    link.title = fileObj.name;
+
+    const rmBtn = document.createElement("button");
+    rmBtn.className = "remove-file";
+    rmBtn.textContent = "×";
+    rmBtn.title = "파일 제거";
+    rmBtn.onclick = async () => {
+      if (!confirm(`"${fileObj.name}" 첨부를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.`)) return;
+      memo.files = memo.files.filter(f => f.url !== fileObj.url);
+      wrap.remove();
+      scheduleSave();
+      // GitHub 원본 삭제 (백그라운드)
+      deleteGithubFile(fileObj.url).catch(err => console.warn("GitHub 파일 삭제 실패:", err));
+    };
+
+    wrap.appendChild(icon);
+    wrap.appendChild(link);
+    wrap.appendChild(rmBtn);
+    return wrap;
+  }
+
+  /* ── 통합 Paste handler (이미지 + 파일) ── */
+  async function handlePaste(e, memo, card, ta) {
     const items = e.clipboardData?.items || [];
     for (const item of items) {
-      if (item.type.startsWith("image/")) {
+      if (item.kind === "file") {
         e.preventDefault();
         const file = item.getAsFile();
-        await uploadImage(file, memo, card);
+        if (item.type.startsWith("image/")) {
+          await uploadImage(file, memo, card);
+        } else {
+          await uploadFile(file, memo, card);
+        }
         return;
       }
     }
@@ -648,6 +761,115 @@ let GITHUB_TOKEN = null;
       ph.textContent = "업로드 실패";
       setTimeout(() => ph.remove(), 3000);
     }
+  }
+
+  /* ── 일반 파일 업로드 ── */
+  async function uploadFile(file, memo, card) {
+    const fileArea = card.querySelector(".card-files");
+
+    const ph = document.createElement("div");
+    ph.className = "upload-placeholder";
+    ph.textContent = `"${file.name}" 업로드 중...`;
+    fileArea.appendChild(ph);
+
+    try {
+      const token = await loadGithubToken();
+      const base64 = await fileToBase64(file);
+      const pureBase64 = base64.split(",")[1];
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9가-힣._-]/g, "_");
+      const fileName = `uploads/${Date.now()}_${safeName}`;
+
+      const res = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${fileName}`,
+        {
+          method: "PUT",
+          headers: {
+            "Authorization": `token ${token}`,
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            message: `Upload file ${fileName}`,
+            content: pureBase64,
+            branch: GITHUB_BRANCH
+          })
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err);
+      }
+
+      const fileUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${fileName}`;
+      const fileObj = { name: file.name, url: fileUrl };
+
+      memo.files.push(fileObj);
+      memo.updated = Date.now();
+
+      const dateDiv = card.querySelector(".card-date");
+      if (dateDiv) dateDiv.textContent = formatDate(memo.updated);
+
+      ph.replaceWith(buildFileLink(fileObj, memo));
+      scheduleSave();
+      console.log(`[파일 업로드] ${file.name} (${(file.size/1024).toFixed(0)}KB)`);
+
+    } catch (err) {
+      console.error(err);
+      ph.textContent = "업로드 실패";
+      setTimeout(() => ph.remove(), 3000);
+    }
+  }
+
+  /* ── GitHub 파일 삭제 ── */
+  function extractGithubPath(url) {
+    // jsDelivr: https://cdn.jsdelivr.net/gh/owner/repo@branch/uploads/xxx
+    let match = url.match(/\/gh\/[^/]+\/[^@]+@[^/]+\/(.+)$/);
+    if (match) return match[1];
+    // raw.githubusercontent: https://raw.githubusercontent.com/owner/repo/branch/uploads/xxx
+    match = url.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/);
+    return match ? match[1] : null;
+  }
+
+  async function deleteGithubFile(cdnUrl) {
+    const filePath = extractGithubPath(cdnUrl);
+    if (!filePath) { console.warn("GitHub 경로 추출 실패:", cdnUrl); return; }
+
+    const token = await loadGithubToken();
+    const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}?ref=${GITHUB_BRANCH}`;
+
+    // 1) SHA 조회
+    const infoRes = await fetch(apiUrl, {
+      headers: {
+        "Authorization": `token ${token}`,
+        "Accept": "application/vnd.github+json"
+      }
+    });
+
+    if (!infoRes.ok) throw new Error(`SHA 조회 실패 (${infoRes.status})`);
+    const info = await infoRes.json();
+
+    // 2) 삭제 요청
+    const delRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`,
+      {
+        method: "DELETE",
+        headers: {
+          "Authorization": `token ${token}`,
+          "Accept": "application/vnd.github+json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          message: `Delete ${filePath}`,
+          sha: info.sha,
+          branch: GITHUB_BRANCH
+        })
+      }
+    );
+
+    if (!delRes.ok) throw new Error(`삭제 실패 (${delRes.status})`);
+    console.log(`[GitHub 삭제] ${filePath}`);
   }
 
   /* ── Lightbox ── */
