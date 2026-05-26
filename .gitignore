@@ -1,0 +1,28 @@
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Web
+node_modules/
+dist/
+.vite/
+
+# Android
+memo-android/.gradle/
+memo-android/local.properties
+memo-android/**/build/
+memo-android/**/.cxx/
+memo-android/**/captures/
+
+# Desktop local runtime data
+memo-desktop/debug-*.log
+memo-desktop/data/windows.json
+
+# Keep repository-root uploads tracked for existing GitHub API/CDN URLs.
+!uploads/

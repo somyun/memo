@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "674466200117",
+    "project_id": "memo-3a7c8",
+    "storage_bucket": "memo-3a7c8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:674466200117:android:f838a62538ff4f3bffcf7c",
+        "android_client_info": {
+          "package_name": "com.somyun.memo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhRgOuIFBqVQuwSuBoiH0p9MZ281MDbPk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
