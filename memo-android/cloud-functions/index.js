@@ -5,58 +5,82 @@ const { getMessaging } = require("firebase-admin/messaging");
 
 initializeApp();
 
-/**
- * memos 컬렉션 문서 변경 시 → 모든 기기에 FCM 푸시 → 위젯 갱신
- */
 exports.onMemoUpdate = onDocumentWritten("memos/{memoId}", async (event) => {
-    const memoId = event.params.memoId;
-    console.log(`메모 변경 감지: ${memoId}`);
+  const memoId = event.params.memoId;
+  const after = event.data?.after;
+  const deleted = !after?.exists;
+  const memo = deleted ? null : after.data();
 
-    try {
-        // 등록된 모든 기기의 FCM 토큰 조회
-        const devicesSnapshot = await getFirestore().collection("devices").get();
-        const tokens = devicesSnapshot.docs
-            .map(doc => doc.data().fcmToken)
-            .filter(token => !!token);
+  console.log(`Memo changed: ${memoId}, deleted=${deleted}`);
 
-        if (tokens.length === 0) {
-            console.log("등록된 기기 없음");
-            return;
-        }
+  try {
+    const devicesSnapshot = await getFirestore().collection("devices").get();
+    const tokens = devicesSnapshot.docs
+      .map((doc) => doc.data().fcmToken)
+      .filter((token) => !!token);
 
-        // 데이터 메시지 전송 (알림 없이, 위젯 갱신만 트리거)
-        const message = {
-            data: {
-                action: "widget_update",
-                memoId: memoId
-            },
-            android: {
-                priority: "high"
-            },
-            tokens: tokens
-        };
-
-        const response = await getMessaging().sendEachForMulticast(message);
-        console.log(`FCM 전송 완료: 성공 ${response.successCount}, 실패 ${response.failureCount}`);
-
-        // 만료된 토큰 정리
-        if (response.failureCount > 0) {
-            const failedTokens = [];
-            response.responses.forEach((resp, idx) => {
-                if (!resp.success) {
-                    failedTokens.push(tokens[idx]);
-                }
-            });
-            // 실패한 토큰의 기기 문서 삭제
-            for (const token of failedTokens) {
-                const docs = await getFirestore()
-                    .collection("devices")
-                    .where("fcmToken", "==", token)
-                    .get();
-                docs.forEach(doc => doc.ref.delete());
-            }
-        }
-    } catch (error) {
-        console.error("FCM 전송 실패:", error);
+    if (tokens.length === 0) {
+      console.log("No registered devices");
+      return;
     }
+
+    const data = {
+      action: "widget_update",
+      memoId,
+      deleted: String(deleted),
+    };
+
+    if (memo) {
+      data.text = String(memo.text ?? "").slice(0, 3500);
+      data.updated = String(normalizeMillis(memo.updated));
+    }
+
+    const response = await getMessaging().sendEachForMulticast({
+      data,
+      android: {
+        priority: "high",
+      },
+      tokens,
+    });
+
+    console.log(
+      `FCM sent: success ${response.successCount}, failure ${response.failureCount}`
+    );
+
+    if (response.failureCount > 0) {
+      await removeFailedTokens(tokens, response.responses);
+    }
+  } catch (error) {
+    console.error("FCM send failed:", error);
+  }
 });
+
+function normalizeMillis(value) {
+  if (!value) {
+    return Date.now();
+  }
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value.toMillis === "function") {
+    return value.toMillis();
+  }
+  return Date.now();
+}
+
+async function removeFailedTokens(tokens, responses) {
+  const failedTokens = [];
+  responses.forEach((response, index) => {
+    if (!response.success) {
+      failedTokens.push(tokens[index]);
+    }
+  });
+
+  for (const token of failedTokens) {
+    const docs = await getFirestore()
+      .collection("devices")
+      .where("fcmToken", "==", token)
+      .get();
+    docs.forEach((doc) => doc.ref.delete());
+  }
+}

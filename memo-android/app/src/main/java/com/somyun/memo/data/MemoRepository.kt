@@ -3,6 +3,7 @@ package com.somyun.memo.data
 import android.content.Context
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Source
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -39,6 +40,11 @@ class MemoRepository(private val context: Context) {
     /** 단일 메모 조회 (위젯 등에서 사용) */
     suspend fun getMemo(memoId: String): Memo? {
         val doc = memosRef.document(memoId).get().await()
+        return doc.data?.let { Memo.fromFirestore(it, doc.id) }
+    }
+
+    suspend fun getMemo(memoId: String, source: Source): Memo? {
+        val doc = memosRef.document(memoId).get(source).await()
         return doc.data?.let { Memo.fromFirestore(it, doc.id) }
     }
 

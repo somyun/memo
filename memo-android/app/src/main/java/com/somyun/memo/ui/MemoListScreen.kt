@@ -24,10 +24,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,10 +52,23 @@ fun MemoListScreen(viewModel: MemoViewModel) {
     var activeEditingMemoId by remember { mutableStateOf<String?>(null) }
     var newlyCreatedMemoId by remember { mutableStateOf<String?>(null) }
     var lastIndex by remember { mutableStateOf(-1) }
+    var displayedMemos by remember { mutableStateOf<List<Memo>>(emptyList()) }
+
+    LaunchedEffect(state.memos, activeEditingMemoId) {
+        displayedMemos = if (activeEditingMemoId == null || displayedMemos.isEmpty()) {
+            state.memos
+        } else {
+            val byId = state.memos.associateBy { it.id }
+            val stableIds = displayedMemos.map { it.id }
+            val stable = stableIds.mapNotNull { byId[it] }
+            val newItems = state.memos.filterNot { it.id in stableIds }
+            stable + newItems
+        }
+    }
 
     LaunchedEffect(state.memos, activeEditingMemoId, newlyCreatedMemoId) {
         newlyCreatedMemoId?.let { id ->
-            val index = state.memos.indexOfFirst { it.id == id }
+            val index = displayedMemos.indexOfFirst { it.id == id }
             if (index != -1) {
                 listState.animateScrollToItem(index)
                 activeEditingMemoId = id
@@ -60,7 +77,7 @@ fun MemoListScreen(viewModel: MemoViewModel) {
         }
 
         activeEditingMemoId?.let { id ->
-            val index = state.memos.indexOfFirst { it.id == id }
+            val index = displayedMemos.indexOfFirst { it.id == id }
             if (index != -1 && index != lastIndex) {
                 lastIndex = index
                 listState.animateScrollToItem(index)
@@ -177,7 +194,7 @@ fun MemoListScreen(viewModel: MemoViewModel) {
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(state.memos, key = { it.id }) { memo ->
+                items(displayedMemos, key = { it.id }) { memo ->
                     MemoCard(
                         memo = memo,
                         onTextChange = { viewModel.updateMemoText(memo, it) },
@@ -185,7 +202,9 @@ fun MemoListScreen(viewModel: MemoViewModel) {
                         onTogglePin = { viewModel.togglePin(memo) },
                         onRemoveImage = { url -> viewModel.removeImage(memo, url) },
                         onRemoveFile = { url -> viewModel.removeFile(memo, url) },
-                        onFocus = { activeEditingMemoId = memo.id },
+                        onFocusChange = { isFocused ->
+                            activeEditingMemoId = if (isFocused) memo.id else null
+                        },
                         shouldAutoFocus = newlyCreatedMemoId == memo.id,
                         onAutoFocusHandled = { newlyCreatedMemoId = null }
                     )
@@ -203,17 +222,27 @@ fun MemoCard(
     onTogglePin: () -> Unit,
     onRemoveImage: (String) -> Unit,
     onRemoveFile: (String) -> Unit,
-    onFocus: () -> Unit,
+    onFocusChange: (Boolean) -> Unit,
     shouldAutoFocus: Boolean = false,
     onAutoFocusHandled: () -> Unit = {}
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
-    var text by remember(memo.id) { mutableStateOf(memo.text) }
+    var textFieldValue by remember(memo.id) {
+        mutableStateOf(TextFieldValue(memo.text, TextRange(memo.text.length)))
+    }
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     val focusRequester = remember { FocusRequester() }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val coroutineScope = rememberCoroutineScope()
  
     // 외부 변경 반영 (다른 기기에서 수정)
     LaunchedEffect(memo.text) {
-        if (memo.text != text) text = memo.text
+        if (memo.text != textFieldValue.text) {
+            textFieldValue = TextFieldValue(
+                text = memo.text,
+                selection = TextRange(textFieldValue.selection.end.coerceIn(0, memo.text.length))
+            )
+        }
     }
 
     LaunchedEffect(shouldAutoFocus) {
@@ -269,20 +298,28 @@ fun MemoCard(
 
             // 텍스트 입력
             BasicTextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    onTextChange(it)
+                value = textFieldValue,
+                onValueChange = { value ->
+                    textFieldValue = value
+                    if (value.text != memo.text) {
+                        onTextChange(value.text)
+                    }
+                    textLayoutResult?.cursorViewportRect(value.selection.end)?.let { rect ->
+                        coroutineScope.launch {
+                            delay(40)
+                            bringIntoViewRequester.bringIntoView(rect)
+                        }
+                    }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .defaultMinSize(minHeight = 80.dp)
+                    .bringIntoViewRequester(bringIntoViewRequester)
                     .focusRequester(focusRequester)
                     .onFocusChanged { focusState ->
-                        if (focusState.isFocused) {
-                            onFocus()
-                        }
+                        onFocusChange(focusState.isFocused)
                     },
+                onTextLayout = { textLayoutResult = it },
                 textStyle = TextStyle(
                     color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
@@ -290,7 +327,7 @@ fun MemoCard(
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { inner ->
-                    if (text.isEmpty()) {
+                    if (textFieldValue.text.isEmpty()) {
                         Text("메모 입력...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
                     }
                     inner()
@@ -438,6 +475,35 @@ fun FileAttachmentRow(name: String, url: String, onRemove: () -> Unit) {
             }
         )
     }
+}
+
+private fun TextLayoutResult.cursorViewportRect(cursorOffset: Int): Rect {
+    if (lineCount == 0) {
+        return Rect.Zero
+    }
+
+    val safeOffset = cursorOffset.coerceIn(0, layoutInput.text.text.length)
+    val currentLine = getLineForOffset(safeOffset)
+    val startLine = maxOf(0, currentLine - 1)
+    val endLine = minOf(lineCount - 1, currentLine + 1)
+    val cursorRect = getCursorRect(safeOffset)
+
+    var topOffset = getLineTop(startLine)
+    var bottomOffset = getLineBottom(endLine)
+
+    if (currentLine == 0) {
+        topOffset -= 80f
+    }
+    if (currentLine == lineCount - 1) {
+        bottomOffset += 120f
+    }
+
+    return Rect(
+        left = 0f,
+        top = topOffset,
+        right = maxOf(cursorRect.right, 1f),
+        bottom = bottomOffset
+    )
 }
 
 private fun formatDate(ts: Long): String {

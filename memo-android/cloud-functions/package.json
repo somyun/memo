@@ -1,0 +1,17 @@
+{
+  "name": "memo-functions",
+  "description": "Cloud Functions for memo widget updates",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "deploy": "firebase deploy --only functions:onMemoUpdate",
+    "lint": "node --check index.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.2"
+  },
+  "private": true
+}

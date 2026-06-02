@@ -44,11 +44,6 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
     private var rawMemos: List<Memo> = emptyList()
 
     init {
-        repository.onMemoChanged = { _ ->
-            viewModelScope.launch {
-                MemoWidgetProvider.updateAllWidgets(getApplication())
-            }
-        }
         observeMemos()
     }
 
@@ -62,7 +57,7 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
                     error = null
                 )
                 // 외부 변경(Firebase Console, 다른 기기 등)이 감지되었을 때 위젯도 즉시 갱신
-                MemoWidgetProvider.updateAllWidgets(getApplication())
+                MemoWidgetProvider.updateWidgetsForMemos(getApplication(), memos)
             }
         }
     }
@@ -202,6 +197,7 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
     private fun updateLocalMemo(updated: Memo) {
         rawMemos = rawMemos.map { if (it.id == updated.id) updated else it }
         _uiState.value = _uiState.value.copy(memos = applySortAndFilter(rawMemos))
+        MemoWidgetProvider.updateWidgetsForMemo(getApplication(), updated)
     }
 
     private fun debounceSave(memo: Memo) {
