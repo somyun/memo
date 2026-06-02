@@ -1,0 +1,45 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="120" x2="860" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE96B"/>
+      <stop offset="1" stop-color="#FFC907"/>
+    </linearGradient>
+
+    <linearGradient id="line" x1="180" y1="260" x2="650" y2="260" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#20242D"/>
+      <stop offset="1" stop-color="#545963"/>
+    </linearGradient>
+
+    <linearGradient id="share" x1="520" y1="540" x2="780" y2="880" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#92EAF2"/>
+      <stop offset="0.55" stop-color="#67B8D6"/>
+      <stop offset="1" stop-color="#5E80F5"/>
+    </linearGradient>
+
+    <linearGradient id="fold" x1="770" y1="770" x2="930" y2="930" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF9C9"/>
+      <stop offset="1" stop-color="#F3E4A0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="70" y="70" width="884" height="884" rx="110" fill="url(#bg)"/>
+
+  <!-- Memo Lines -->
+  <rect x="175" y="248" width="470" height="44" rx="22" fill="url(#line)"/>
+  <rect x="175" y="420" width="360" height="44" rx="22" fill="url(#line)"/>
+  <rect x="175" y="592" width="225" height="44" rx="22" fill="url(#line)"/>
+
+  <!-- Share Symbol -->
+  <g transform="rotate(-7 640 660)">
+    <path d="M520 680L755 580" stroke="url(#share)" stroke-width="28" stroke-linecap="round"/>
+    <path d="M525 692L665 835" stroke="url(#share)" stroke-width="28" stroke-linecap="round"/>
+
+    <circle cx="505" cy="680" r="43" fill="url(#share)"/>
+    <circle cx="800" cy="565" r="68" fill="url(#share)"/>
+    <circle cx="660" cy="830" r="55" fill="url(#share)"/>
+  </g>
+
+  <!-- Folded Corner -->
+
+</svg>
