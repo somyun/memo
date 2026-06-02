@@ -1,7 +1,13 @@
 package com.somyun.memo.ui
 
+import android.app.DownloadManager
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,11 +29,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -35,6 +45,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.somyun.memo.data.Memo
 import com.somyun.memo.ui.theme.*
@@ -43,7 +55,11 @@ import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MemoListScreen(viewModel: MemoViewModel) {
+fun MemoListScreen(
+    viewModel: MemoViewModel,
+    initialFocusMemoId: String? = null,
+    onInitialFocusHandled: () -> Unit = {}
+) {
     val state by viewModel.uiState.collectAsState()
     var showSearch by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
@@ -51,11 +67,24 @@ fun MemoListScreen(viewModel: MemoViewModel) {
     val listState = rememberLazyListState()
     var activeEditingMemoId by remember { mutableStateOf<String?>(null) }
     var newlyCreatedMemoId by remember { mutableStateOf<String?>(null) }
+    var pendingFocusMemoId by remember { mutableStateOf<String?>(null) }
     var lastIndex by remember { mutableStateOf(-1) }
     var displayedMemos by remember { mutableStateOf<List<Memo>>(emptyList()) }
+    var lastAppliedResortVersion by remember { mutableStateOf(-1) }
 
-    LaunchedEffect(state.memos, activeEditingMemoId) {
-        displayedMemos = if (activeEditingMemoId == null || displayedMemos.isEmpty()) {
+    LaunchedEffect(initialFocusMemoId) {
+        if (initialFocusMemoId != null) {
+            pendingFocusMemoId = initialFocusMemoId
+        }
+    }
+
+    LaunchedEffect(state.memos, activeEditingMemoId, state.resortVersion) {
+        val shouldApplySortedOrder = activeEditingMemoId == null ||
+                displayedMemos.isEmpty() ||
+                lastAppliedResortVersion != state.resortVersion
+
+        displayedMemos = if (shouldApplySortedOrder) {
+            lastAppliedResortVersion = state.resortVersion
             state.memos
         } else {
             val byId = state.memos.associateBy { it.id }
@@ -66,7 +95,17 @@ fun MemoListScreen(viewModel: MemoViewModel) {
         }
     }
 
-    LaunchedEffect(state.memos, activeEditingMemoId, newlyCreatedMemoId) {
+    LaunchedEffect(displayedMemos, activeEditingMemoId, newlyCreatedMemoId, pendingFocusMemoId) {
+        pendingFocusMemoId?.let { id ->
+            val index = displayedMemos.indexOfFirst { it.id == id }
+            if (index != -1) {
+                listState.animateScrollToItem(index)
+                activeEditingMemoId = id
+                onInitialFocusHandled()
+            }
+            return@LaunchedEffect
+        }
+
         newlyCreatedMemoId?.let { id ->
             val index = displayedMemos.indexOfFirst { it.id == id }
             if (index != -1) {
@@ -205,8 +244,11 @@ fun MemoListScreen(viewModel: MemoViewModel) {
                         onFocusChange = { isFocused ->
                             activeEditingMemoId = if (isFocused) memo.id else null
                         },
-                        shouldAutoFocus = newlyCreatedMemoId == memo.id,
-                        onAutoFocusHandled = { newlyCreatedMemoId = null }
+                        shouldAutoFocus = newlyCreatedMemoId == memo.id || pendingFocusMemoId == memo.id,
+                        onAutoFocusHandled = {
+                            if (newlyCreatedMemoId == memo.id) newlyCreatedMemoId = null
+                            if (pendingFocusMemoId == memo.id) pendingFocusMemoId = null
+                        }
                     )
                 }
             }
@@ -382,7 +424,9 @@ fun MemoCard(
 
 @Composable
 fun ImageAttachment(url: String, onRemove: () -> Unit) {
+    val context = LocalContext.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showFullImage by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -396,18 +440,33 @@ fun ImageAttachment(url: String, onRemove: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = 200.dp)
-                .clip(RoundedCornerShape(4.dp)),
+                .clip(RoundedCornerShape(4.dp))
+                .clickable { showFullImage = true },
             contentScale = ContentScale.Crop
         )
-        IconButton(
-            onClick = { showDeleteConfirm = true },
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .size(24.dp)
-                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                .padding(6.dp)
+                .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(24.dp))
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(Icons.Default.Close, "삭제", tint = Color.White, modifier = Modifier.size(14.dp))
+            ImageActionButton(
+                icon = Icons.Default.Download,
+                contentDescription = "이미지 저장",
+                onClick = { saveImageToDownloads(context, url) }
+            )
+            ImageActionButton(
+                icon = Icons.Default.Close,
+                contentDescription = "삭제",
+                onClick = { showDeleteConfirm = true }
+            )
         }
+    }
+
+    if (showFullImage) {
+        ZoomableImageViewer(url = url, onDismiss = { showFullImage = false })
     }
 
     if (showDeleteConfirm) {
@@ -424,6 +483,81 @@ fun ImageAttachment(url: String, onRemove: () -> Unit) {
                 TextButton(onClick = { showDeleteConfirm = false }) { Text("취소") }
             }
         )
+    }
+}
+
+@Composable
+private fun ImageActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(40.dp)
+    ) {
+        Icon(icon, contentDescription, tint = Color.White, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun ZoomableImageViewer(url: String, onDismiss: () -> Unit) {
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            AsyncImage(
+                model = url,
+                contentDescription = "첨부 이미지 전체보기",
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val nextScale = (scale * zoom).coerceIn(1f, 5f)
+                            val nextOffset = if (nextScale == 1f) {
+                                Offset.Zero
+                            } else {
+                                offset + pan
+                            }
+                            scale = nextScale
+                            offset = nextOffset
+                        }
+                    }
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    }
+                    .padding(8.dp),
+                contentScale = ContentScale.Fit
+            )
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(24.dp))
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
+            ) {
+                ImageActionButton(
+                    icon = Icons.Default.Close,
+                    contentDescription = "닫기",
+                    onClick = onDismiss
+                )
+            }
+        }
     }
 }
 
@@ -484,18 +618,18 @@ private fun TextLayoutResult.cursorViewportRect(cursorOffset: Int): Rect {
 
     val safeOffset = cursorOffset.coerceIn(0, layoutInput.text.text.length)
     val currentLine = getLineForOffset(safeOffset)
-    val startLine = maxOf(0, currentLine - 1)
-    val endLine = minOf(lineCount - 1, currentLine + 1)
+    val startLine = maxOf(0, currentLine - 2)
+    val endLine = minOf(lineCount - 1, currentLine + 2)
     val cursorRect = getCursorRect(safeOffset)
 
     var topOffset = getLineTop(startLine)
     var bottomOffset = getLineBottom(endLine)
 
-    if (currentLine == 0) {
-        topOffset -= 80f
+    if (currentLine <= 1) {
+        topOffset -= 120f
     }
-    if (currentLine == lineCount - 1) {
-        bottomOffset += 120f
+    if (currentLine >= lineCount - 2) {
+        bottomOffset += 160f
     }
 
     return Rect(
@@ -504,6 +638,30 @@ private fun TextLayoutResult.cursorViewportRect(cursorOffset: Int): Rect {
         right = maxOf(cursorRect.right, 1f),
         bottom = bottomOffset
     )
+}
+
+private fun saveImageToDownloads(context: Context, url: String) {
+    runCatching {
+        val uri = Uri.parse(url)
+        val fileName = uri.lastPathSegment
+            ?.substringBefore("?")
+            ?.takeIf { it.isNotBlank() && "." in it }
+            ?: "memo_image_${System.currentTimeMillis()}.jpg"
+        val request = DownloadManager.Request(uri)
+            .setTitle(fileName)
+            .setDescription("Downloading memo image")
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setDestinationInExternalPublicDir(Environment.DIRECTORY_PICTURES, fileName)
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        manager.enqueue(request)
+    }.onSuccess {
+        Toast.makeText(context, "이미지 저장을 시작했습니다", Toast.LENGTH_SHORT).show()
+    }.onFailure { error ->
+        Toast.makeText(context, "이미지 저장 실패: ${error.message}", Toast.LENGTH_SHORT).show()
+    }
 }
 
 private fun formatDate(ts: Long): String {

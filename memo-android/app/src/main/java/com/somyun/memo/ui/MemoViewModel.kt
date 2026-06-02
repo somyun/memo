@@ -27,7 +27,8 @@ data class MemoUiState(
     val error: String? = null,
     val sortOrder: SortOrder = SortOrder.UPDATED_DESC,
     val searchQuery: String = "",
-    val statusMessage: String = ""
+    val statusMessage: String = "",
+    val resortVersion: Int = 0
 )
 
 class MemoViewModel(application: Application) : AndroidViewModel(application) {
@@ -83,7 +84,10 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSortOrder(order: SortOrder) {
         _uiState.value = _uiState.value.copy(sortOrder = order)
-        _uiState.value = _uiState.value.copy(memos = applySortAndFilter(rawMemos))
+        _uiState.value = _uiState.value.copy(
+            memos = applySortAndFilter(rawMemos),
+            resortVersion = _uiState.value.resortVersion + 1
+        )
     }
 
     fun setSearchQuery(query: String) {
@@ -206,6 +210,10 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
         saveJob = viewModelScope.launch {
             delay(1400)
             repository.saveMemo(memo)
+            _uiState.value = _uiState.value.copy(
+                memos = applySortAndFilter(rawMemos),
+                resortVersion = _uiState.value.resortVersion + 1
+            )
             setStatus("저장됨")
             clearStatusAfterDelay()
         }

@@ -152,7 +152,7 @@ class MemoWidgetProvider : AppWidgetProvider() {
                 .putString(dateKey(appWidgetId), date)
                 .apply()
 
-            renderMessage(context, appWidgetManager, appWidgetId, text, date)
+            renderMessage(context, appWidgetManager, appWidgetId, text, date, memo.id)
         }
 
         private fun renderCachedOrMessage(
@@ -163,8 +163,9 @@ class MemoWidgetProvider : AppWidgetProvider() {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val cachedText = prefs.getString(textKey(appWidgetId), null)
             val cachedDate = prefs.getString(dateKey(appWidgetId), "") ?: ""
+            val memoId = prefs.getString(memoIdKey(appWidgetId), null)
             if (cachedText != null) {
-                renderMessage(context, appWidgetManager, appWidgetId, cachedText, cachedDate)
+                renderMessage(context, appWidgetManager, appWidgetId, cachedText, cachedDate, memoId)
             } else {
                 renderMessage(context, appWidgetManager, appWidgetId, "메모를 불러올 수 없습니다", "")
             }
@@ -175,7 +176,8 @@ class MemoWidgetProvider : AppWidgetProvider() {
             appWidgetManager: AppWidgetManager,
             appWidgetId: Int,
             text: String,
-            date: String
+            date: String,
+            memoId: String? = null
         ) {
             val views = RemoteViews(context.packageName, R.layout.widget_memo).apply {
                 setTextViewText(R.id.widget_text, text)
@@ -187,6 +189,7 @@ class MemoWidgetProvider : AppWidgetProvider() {
                         appWidgetId,
                         Intent(context, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            memoId?.let { putExtra(MainActivity.EXTRA_MEMO_ID, it) }
                         },
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                     )
