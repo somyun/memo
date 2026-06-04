@@ -2,9 +2,12 @@ package com.somyun.memo.ui
 
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -48,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.somyun.memo.data.AttachmentStorage
 import com.somyun.memo.data.Memo
 import com.somyun.memo.ui.theme.*
 import java.text.SimpleDateFormat
@@ -239,6 +243,7 @@ fun MemoListScreen(
                         onTextChange = { viewModel.updateMemoText(memo, it) },
                         onDelete = { viewModel.deleteMemo(memo) },
                         onTogglePin = { viewModel.togglePin(memo) },
+                        onAttachFiles = { uris -> viewModel.attachUris(memo, uris) },
                         onRemoveImage = { url -> viewModel.removeImage(memo, url) },
                         onRemoveFile = { url -> viewModel.removeFile(memo, url) },
                         onFocusChange = { isFocused ->
@@ -262,6 +267,7 @@ fun MemoCard(
     onTextChange: (String) -> Unit,
     onDelete: () -> Unit,
     onTogglePin: () -> Unit,
+    onAttachFiles: (List<Uri>) -> Unit,
     onRemoveImage: (String) -> Unit,
     onRemoveFile: (String) -> Unit,
     onFocusChange: (Boolean) -> Unit,
@@ -276,6 +282,10 @@ fun MemoCard(
     val focusRequester = remember { FocusRequester() }
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val coroutineScope = rememberCoroutineScope()
+    val attachmentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris -> onAttachFiles(uris) }
+    )
  
     // 외부 변경 반영 (다른 기기에서 수정)
     LaunchedEffect(memo.text) {
@@ -394,13 +404,29 @@ fun MemoCard(
 
             // 하단: 수정 날짜
             Spacer(Modifier.height(8.dp))
-            Text(
-                formatDate(memo.updated),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.End),
-                fontSize = 10.sp
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { attachmentLauncher.launch(arrayOf("*/*")) },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AttachFile,
+                        contentDescription = "파일 또는 이미지 첨부",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    formatDate(memo.updated),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp
+                )
+            }
         }
     }
 
@@ -563,6 +589,7 @@ private fun ZoomableImageViewer(url: String, onDismiss: () -> Unit) {
 
 @Composable
 fun FileAttachmentRow(name: String, url: String, onRemove: () -> Unit) {
+    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
@@ -583,7 +610,7 @@ fun FileAttachmentRow(name: String, url: String, onRemove: () -> Unit) {
             text = name,
             modifier = Modifier
                 .weight(1f)
-                .clickable { uriHandler.openUri(url) },
+                .clickable { openAttachment(context, uriHandler, url) },
             color = LinkBlue,
             fontSize = 12.sp,
             maxLines = 1,
@@ -638,6 +665,27 @@ private fun TextLayoutResult.cursorViewportRect(cursorOffset: Int): Rect {
         right = maxOf(cursorRect.right, 1f),
         bottom = bottomOffset
     )
+}
+
+private fun openAttachment(
+    context: Context,
+    uriHandler: androidx.compose.ui.platform.UriHandler,
+    url: String
+) {
+    if (!AttachmentStorage.isLocalUri(url)) {
+        uriHandler.openUri(url)
+        return
+    }
+
+    val uri = Uri.parse(url)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setData(uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, "첨부 열기")) }
+        .onFailure {
+            Toast.makeText(context, "첨부를 열 수 없습니다", Toast.LENGTH_SHORT).show()
+        }
 }
 
 private fun saveImageToDownloads(context: Context, url: String) {

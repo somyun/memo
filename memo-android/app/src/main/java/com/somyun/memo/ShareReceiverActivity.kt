@@ -10,6 +10,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,22 +20,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.somyun.memo.data.AttachmentStorage
+import com.somyun.memo.data.GitHubUploader
 import com.somyun.memo.data.Memo
 import com.somyun.memo.data.MemoRepository
-import com.somyun.memo.data.GitHubUploader
-import com.somyun.memo.widget.MemoWidgetProvider
+import com.somyun.memo.data.StoredAttachment
 import com.somyun.memo.ui.theme.MemoTheme
+import com.somyun.memo.widget.MemoWidgetProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
-/**
- * 다른 앱에서 "공유"를 통해 파일/이미지를 받는 액티비티
- */
 class ShareReceiverActivity : ComponentActivity() {
 
     private lateinit var repository: MemoRepository
     private val gitHubUploader = GitHubUploader()
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,6 +58,7 @@ class ShareReceiverActivity : ComponentActivity() {
             MemoTheme {
                 ShareMemoSelector(
                     uris = uris,
+                    onCreateMemo = { attachFiles(createMemoFromShareText(), uris) },
                     onMemoSelected = { memo -> attachFiles(memo, uris) },
                     onCancel = { finish() }
                 )
@@ -69,37 +79,31 @@ class ShareReceiverActivity : ComponentActivity() {
         return uris
     }
 
+    private fun createMemoFromShareText(): Memo {
+        val id = System.currentTimeMillis().toString(36) +
+                (Math.random() * 100000).toLong().toString(36)
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+        return Memo(id = id, text = text)
+    }
+
     private fun attachFiles(memo: Memo, uris: List<Uri>) {
-        val scope = kotlinx.coroutines.MainScope()
-        scope.launch {
+        MainScope().launch {
             try {
-                val token = repository.loadGithubToken()
-                var updatedMemo = memo
-
-                for (uri in uris) {
-                    val bytes = contentResolver.openInputStream(uri)?.readBytes() ?: continue
-                    val mimeType = contentResolver.getType(uri) ?: ""
-                    val fileName = getFileName(uri)
-
-                    if (mimeType.startsWith("image/")) {
-                        val url = gitHubUploader.uploadImage(bytes, token)
-                        updatedMemo = updatedMemo.copy(
-                            images = updatedMemo.images + url,
-                            updated = System.currentTimeMillis()
-                        )
-                    } else {
-                        val url = gitHubUploader.uploadFile(bytes, fileName, token)
-                        val fileEntry = mapOf("name" to fileName, "url" to url)
-                        updatedMemo = updatedMemo.copy(
-                            files = updatedMemo.files + fileEntry,
-                            updated = System.currentTimeMillis()
-                        )
-                    }
+                val stored = withContext(Dispatchers.IO) {
+                    uris.mapNotNull { AttachmentStorage.copyToInternalStorage(applicationContext, it) }
+                }
+                if (stored.isEmpty()) {
+                    Toast.makeText(this@ShareReceiverActivity, "첨부할 파일을 읽지 못했습니다", Toast.LENGTH_SHORT).show()
+                    finish()
+                    return@launch
                 }
 
+                val updatedMemo = memo.withLocalAttachments(stored)
                 repository.saveMemo(updatedMemo)
-                MemoWidgetProvider.updateAllWidgets(this@ShareReceiverActivity.applicationContext)
+                MemoWidgetProvider.updateAllWidgets(applicationContext)
                 Toast.makeText(this@ShareReceiverActivity, "첨부 완료!", Toast.LENGTH_SHORT).show()
+
+                uploadInBackground(updatedMemo.id, stored)
             } catch (e: Exception) {
                 Toast.makeText(this@ShareReceiverActivity, "첨부 실패: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -107,37 +111,73 @@ class ShareReceiverActivity : ComponentActivity() {
         }
     }
 
-    private fun getFileName(uri: Uri): String {
-        var name = "file"
-        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-            if (idx >= 0 && cursor.moveToFirst()) {
-                name = cursor.getString(idx) ?: "file"
+    private fun uploadInBackground(memoId: String, attachments: List<StoredAttachment>) {
+        backgroundScope.launch {
+            val token = runCatching { repository.loadGithubToken() }.getOrNull() ?: return@launch
+            attachments.forEach { attachment ->
+                runCatching {
+                    val bytes = AttachmentStorage.readBytes(applicationContext, attachment.uri) ?: return@runCatching
+                    val remoteUrl = if (AttachmentStorage.isImage(attachment)) {
+                        gitHubUploader.uploadImage(bytes, token)
+                    } else {
+                        gitHubUploader.uploadFile(bytes, attachment.name, token)
+                    }
+                    replaceAttachmentUrl(memoId, attachment.uri, remoteUrl)
+                }
             }
         }
-        return name
     }
 
+    private suspend fun replaceAttachmentUrl(memoId: String, localUri: String, remoteUrl: String) {
+        val current = repository.getMemo(memoId) ?: return
+        val updated = current.copy(
+            images = current.images.map { if (it == localUri) remoteUrl else it },
+            files = current.files.map { file ->
+                if (file["url"] == localUri) file + ("url" to remoteUrl) else file
+            },
+            updated = System.currentTimeMillis()
+        )
+        repository.saveMemo(updated)
+        MemoWidgetProvider.updateAllWidgets(applicationContext)
+    }
+
+    private fun Memo.withLocalAttachments(attachments: List<StoredAttachment>): Memo {
+        var updated = this
+        attachments.forEach { attachment ->
+            updated = if (AttachmentStorage.isImage(attachment)) {
+                updated.copy(images = updated.images + attachment.uri)
+            } else {
+                updated.copy(files = updated.files + mapOf("name" to attachment.name, "url" to attachment.uri))
+            }
+        }
+        return updated.copy(updated = System.currentTimeMillis())
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun ShareMemoSelector(uris: List<Uri>, onMemoSelected: (Memo) -> Unit, onCancel: () -> Unit) {
+    fun ShareMemoSelector(
+        uris: List<Uri>,
+        onCreateMemo: () -> Unit,
+        onMemoSelected: (Memo) -> Unit,
+        onCancel: () -> Unit
+    ) {
         var memos by remember { mutableStateOf<List<Memo>>(emptyList()) }
         var isLoading by remember { mutableStateOf(true) }
 
         LaunchedEffect(Unit) {
             repository.observeMemos().collect {
-                memos = it.sortedByDescending { m -> m.updated }
+                memos = it.sortedByDescending { memo -> memo.updated }
                 isLoading = false
             }
         }
 
         Scaffold(
             topBar = {
-                @OptIn(ExperimentalMaterial3Api::class)
                 TopAppBar(
                     title = { Text("어떤 메모에 첨부할까요?", fontSize = 16.sp) },
                     navigationIcon = {
                         IconButton(onClick = onCancel) {
-                            Text("✕", fontSize = 18.sp)
+                            Icon(Icons.Default.Close, contentDescription = "닫기")
                         }
                     }
                 )
@@ -160,6 +200,25 @@ class ShareReceiverActivity : ComponentActivity() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
+                    }
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onCreateMemo() },
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("새 메모카드로 첨부", fontSize = 15.sp)
+                            }
+                        }
                     }
                     items(memos) { memo ->
                         Card(

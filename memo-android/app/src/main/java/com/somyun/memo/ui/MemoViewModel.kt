@@ -1,11 +1,14 @@
 package com.somyun.memo.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.somyun.memo.data.AttachmentStorage
 import com.somyun.memo.data.GitHubUploader
 import com.somyun.memo.data.Memo
 import com.somyun.memo.data.MemoRepository
+import com.somyun.memo.data.StoredAttachment
 import com.somyun.memo.widget.MemoWidgetProvider
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -165,6 +168,36 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 이미지 제거 + GitHub 삭제 */
+    fun attachUris(memo: Memo, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+
+        viewModelScope.launch {
+            try {
+                setStatus("첨부 저장 중...")
+                val context = getApplication<Application>()
+                val stored = uris.mapNotNull { AttachmentStorage.copyToInternalStorage(context, it) }
+                if (stored.isEmpty()) {
+                    setStatus("첨부할 파일을 읽지 못했습니다")
+                    clearStatusAfterDelay()
+                    return@launch
+                }
+
+                val updated = memo.withLocalAttachments(stored)
+                updateLocalMemo(updated)
+                repository.saveMemo(updated)
+                setStatus("첨부 완료")
+                clearStatusAfterDelay()
+
+                stored.forEach { attachment ->
+                    uploadStoredAttachment(updated.id, attachment)
+                }
+            } catch (e: Exception) {
+                setStatus("첨부 실패: ${e.message}")
+                clearStatusAfterDelay()
+            }
+        }
+    }
+
     fun removeImage(memo: Memo, imageUrl: String) {
         viewModelScope.launch {
             val updated = memo.copy(
@@ -173,6 +206,10 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
             )
             repository.saveMemo(updated)
             try {
+                if (AttachmentStorage.isLocalUri(imageUrl)) {
+                    AttachmentStorage.deleteLocalFile(getApplication(), imageUrl)
+                    return@launch
+                }
                 val token = getToken()
                 gitHubUploader.deleteFile(imageUrl, token)
             } catch (e: Exception) {
@@ -190,6 +227,10 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
             )
             repository.saveMemo(updated)
             try {
+                if (AttachmentStorage.isLocalUri(fileUrl)) {
+                    AttachmentStorage.deleteLocalFile(getApplication(), fileUrl)
+                    return@launch
+                }
                 val token = getToken()
                 gitHubUploader.deleteFile(fileUrl, token)
             } catch (e: Exception) {
@@ -226,7 +267,7 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
     private fun clearStatusAfterDelay() {
         viewModelScope.launch {
             delay(2200)
-            if (_uiState.value.statusMessage == "저장됨" || _uiState.value.statusMessage == "업로드 완료") {
+            if (_uiState.value.statusMessage in listOf("저장됨", "업로드 완료", "첨부 완료", "첨부할 파일을 읽지 못했습니다")) {
                 setStatus("")
             }
         }
@@ -237,5 +278,47 @@ class MemoViewModel(application: Application) : AndroidViewModel(application) {
         val token = repository.loadGithubToken()
         githubToken = token
         return token
+    }
+
+    private fun Memo.withLocalAttachments(attachments: List<StoredAttachment>): Memo {
+        var updated = this
+        attachments.forEach { attachment ->
+            updated = if (AttachmentStorage.isImage(attachment)) {
+                updated.copy(images = updated.images + attachment.uri)
+            } else {
+                updated.copy(files = updated.files + mapOf("name" to attachment.name, "url" to attachment.uri))
+            }
+        }
+        return updated.copy(updated = System.currentTimeMillis())
+    }
+
+    private suspend fun uploadStoredAttachment(memoId: String, attachment: StoredAttachment) {
+        try {
+            val context = getApplication<Application>()
+            val bytes = AttachmentStorage.readBytes(context, attachment.uri) ?: return
+            val token = getToken()
+            val remoteUrl = if (AttachmentStorage.isImage(attachment)) {
+                gitHubUploader.uploadImage(bytes, token)
+            } else {
+                gitHubUploader.uploadFile(bytes, attachment.name, token)
+            }
+            replaceAttachmentUrl(memoId, attachment.uri, remoteUrl)
+        } catch (e: Exception) {
+            setStatus("GitHub 업로드 실패: ${attachment.name}")
+            clearStatusAfterDelay()
+        }
+    }
+
+    private suspend fun replaceAttachmentUrl(memoId: String, localUri: String, remoteUrl: String) {
+        val current = rawMemos.firstOrNull { it.id == memoId } ?: repository.getMemo(memoId) ?: return
+        val updated = current.copy(
+            images = current.images.map { if (it == localUri) remoteUrl else it },
+            files = current.files.map { file ->
+                if (file["url"] == localUri) file + ("url" to remoteUrl) else file
+            },
+            updated = System.currentTimeMillis()
+        )
+        updateLocalMemo(updated)
+        repository.saveMemo(updated)
     }
 }
