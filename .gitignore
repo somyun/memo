@@ -23,6 +23,9 @@ memo-android/**/captures/
 # Desktop local runtime data
 memo-desktop/debug-*.log
 memo-desktop/data/windows.json
+memo-desktop/**/bin/
+memo-desktop/**/obj/
+memo-desktop/**/*.csproj.user
 
 # Keep repository-root uploads tracked for existing GitHub API/CDN URLs.
 !uploads/
