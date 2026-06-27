@@ -8,12 +8,23 @@ class MemoWindow {
     wvc := ""
     wv := ""
     useDesktopLayer := true
+    createIfMissing := false
     ready := false
+    visible := false
     _wmMoveHandler := ""
+    _readyTimer := ""
+    _showOptions := ""
+    _initialX := 0
+    _initialY := 0
+    _initialW := 0
+    _initialH := 0
+    pinned := false
+    pinnedAt := 0
 
-    __New(memoId, useDesktopLayer := true) {
+    __New(memoId, useDesktopLayer := true, createIfMissing := false) {
         this.id := memoId
         this.useDesktopLayer := useDesktopLayer
+        this.createIfMissing := createIfMissing
     }
 
     static EnsureEnvironment() {
@@ -39,6 +50,12 @@ class MemoWindow {
                 x := bounds["x"], y := bounds["y"], w := bounds["w"], h := bounds["h"]
         }
 
+        this._initialX := x
+        this._initialY := y
+        this._initialW := w
+        this._initialH := h
+        this._showOptions := "x" x " y" y " w" w " h" h
+
         this.gui := Gui("-Caption +Resize +MinSize250x160", "Memo " this.id)
         this.gui.BackColor := "FEF9C3"
         this.gui.OnEvent("Close", (*) => this.Close())
@@ -46,15 +63,8 @@ class MemoWindow {
         this._wmMoveHandler := (wParam, lParam, msg, hwnd) => this.OnWmMove(hwnd)
         OnMessage(0x3, this._wmMoveHandler)
 
-        this.gui.Show("x" x " y" y " w" w " h" h)
-
-        if this.useDesktopLayer {
-            try DesktopLayer.Attach(this.gui.Hwnd, x, y, w, h)
-            catch as e {
-                MsgBox("바탕화면 레이어 연결 실패 — 일반 창으로 표시합니다.`n" e.Message, "Memo Desktop", "Icon!")
-                this.useDesktopLayer := false
-            }
-        }
+        ; WebView2는 숨겨진 parent에서 navigation이 멈출 수 있어, 화면 밖에서 먼저 준비시킨다.
+        this.gui.Show("x-32000 y-32000 w" w " h" h " NoActivate")
 
         dllPath := A_ScriptDir "\lib\" (A_PtrSize = 8 ? "64bit" : "32bit") "\WebView2Loader.dll"
         parentHwnd := DllCall("GetParent", "ptr", this.gui.Hwnd, "ptr")
@@ -96,6 +106,9 @@ class MemoWindow {
         this.wv.add_WebMessageReceived((sender, args) => this.OnWebMessage(sender, args))
 
         uri := this.BuildUiUri()
+        this.Log("navigate " uri)
+        this._readyTimer := () => this.OnReadyTimeout()
+        SetTimer(this._readyTimer, -7000)
         this.wv.Navigate(uri)
 
         if this.wvc
@@ -117,7 +130,8 @@ class MemoWindow {
             base := "file:" htmlPath
         else
             base := "file:///" htmlPath
-        return base "#" this.id
+        route := this.createIfMissing ? "new:" this.id : this.id
+        return base "#" route
     }
 
     OnWebMessage(sender, args) {
@@ -133,18 +147,62 @@ class MemoWindow {
 
     OnWebReady(params) {
         this.ready := true
+        if this._readyTimer {
+            SetTimer(this._readyTimer, 0)
+            this._readyTimer := ""
+        }
+        this.Reveal()
         bounds := this.GetBounds()
         this.PushEvent("hostConfig", Map(
             "memoId", this.id,
             "desktopLayer", this.useDesktopLayer,
             "bounds", bounds
         ))
+        this.PushEvent("windowBounds", bounds)
+    }
+
+    Reveal() {
+        if !this.gui || this.visible
+            return
+
+        this.gui.Show(this._showOptions " NoActivate")
+        this.visible := true
+        this.Log("revealed")
+
+        if this.useDesktopLayer {
+            try DesktopLayer.Attach(this.gui.Hwnd, this._initialX, this._initialY, this._initialW, this._initialH)
+            catch as e {
+                MsgBox("바탕화면 레이어 연결 실패 — 일반 창으로 표시합니다.`n" e.Message, "Memo Desktop", "Icon!")
+                this.useDesktopLayer := false
+            }
+        }
+
+        if this.wvc
+            this.wvc.Fill()
+    }
+
+    OnReadyTimeout() {
+        if this.ready || !this.gui
+            return
+        this.Log("memo webview ready timeout")
+        this.Close()
+    }
+
+    OnClientError(params) {
+        msg := params.Has("message") ? params["message"] : ""
+        src := params.Has("source") ? params["source"] : ""
+        line := params.Has("line") ? params["line"] : ""
+        this.Log("client error: " msg " source=" src " line=" line)
+    }
+
+    Log(message) {
+        try FileAppend("[" A_Now "] memo=" this.id " " message "`n", A_ScriptDir "\..\debug-013048.log", "UTF-8")
     }
 
     OnSize(*) {
         if this.wvc
             this.wvc.Fill()
-        if this.ready
+        if this.ready && this.visible
             this.PushEvent("windowBounds", this.GetBounds())
     }
 
@@ -155,22 +213,40 @@ class MemoWindow {
     }
 
     OnMove(*) {
-        if this.ready
+        if this.ready && this.visible
             SetTimer(() => this.PushEvent("windowBounds", this.GetBounds()), -80)
     }
 
     GetBounds() {
-        rect := Buffer(16, 0)
-        DllCall("GetWindowRect", "ptr", this.gui.Hwnd, "ptr", rect)
-        x := NumGet(rect, 0, "int")
-        y := NumGet(rect, 4, "int")
-        r := NumGet(rect, 8, "int")
-        b := NumGet(rect, 12, "int")
-        return Map("x", x, "y", y, "w", r - x, "h", b - y)
+        if !this.visible {
+            return Map("x", this._initialX, "y", this._initialY, "w", this._initialW, "h", this._initialH, "kind", "client")
+        }
+        this.gui.GetPos(&x, &y, &outerW, &outerH)
+        this.gui.GetClientPos(&clientX, &clientY, &w, &h)
+        return Map("x", x, "y", y, "w", w, "h", h, "kind", "client")
     }
 
     SaveBounds(params) {
+        if !this.visible
+            return
         WindowStateStore.Set(this.id, params)
+    }
+
+    SetPinnedState(pinned, pinnedAt := 0) {
+        this.pinned := !!pinned
+        this.pinnedAt := pinnedAt ? pinnedAt : 0
+        if !this.gui
+            return
+        this.Log("pinned=" (this.pinned ? "true" : "false") " pinnedAt=" this.pinnedAt)
+        if this.pinned
+            WinSetAlwaysOnTop(1, "ahk_id " this.gui.Hwnd)
+        else
+            WinSetAlwaysOnTop(0, "ahk_id " this.gui.Hwnd)
+    }
+
+    RaisePinned() {
+        if this.gui && this.pinned
+            WinMoveTop("ahk_id " this.gui.Hwnd)
     }
 
     Drag() {
@@ -193,11 +269,15 @@ class MemoWindow {
     }
 
     Close() {
+        if this._readyTimer {
+            SetTimer(this._readyTimer, 0)
+            this._readyTimer := ""
+        }
         if this._wmMoveHandler {
             OnMessage(0x3, this._wmMoveHandler, 0)
             this._wmMoveHandler := ""
         }
-        if this.ready
+        if this.ready && this.visible
             this.SaveBounds(this.GetBounds())
         if (this.gui)
             this.gui.Destroy()

@@ -6,12 +6,19 @@
   <title>Memo</title>
   <link rel="stylesheet" href="style.css">
   <script src="lib/vue.global.prod.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="lib/firebase-app-compat.js"></script>
+  <script src="lib/firebase-firestore-compat.js"></script>
   <script src="bridge.js"></script>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <main style="height:100%;display:grid;place-items:center;background:#f7f1d9;color:#423a26;font-family:'Segoe UI','Malgun Gothic',sans-serif;">
+      <section style="border:1px solid rgba(79,66,32,.18);border-radius:12px;background:#fffaf0;padding:22px 26px;box-shadow:0 12px 32px rgba(64,52,20,.14);">
+        <strong>WebView HTML 로드됨</strong>
+        <p style="margin-top:8px;color:#827861;font-size:13px;">Vue 앱과 Firestore 초기화를 기다리는 중입니다.</p>
+      </section>
+    </main>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>

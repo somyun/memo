@@ -12,49 +12,48 @@ try DllCall("SetProcessDpiAwarenessContext", "ptr", -4)
 #Include "lib\Bridge.ahk"
 #Include "lib\MemoWindow.ahk"
 #Include "lib\MemoWindowManager.ahk"
+#Include "lib\ManagerWindow.ahk"
+#Include "lib\AppHost.ahk"
+#Include "lib\ShowDesktopOverride.ahk"
 
 global AppConfig := Map()
 
 LoadAppConfig()
 WindowStateStore.Load()
 DesktopLayer.Reset()
+ShowDesktopOverride.Start()
 
 ; 트레이
 A_IconTip := "Memo Desktop"
 A_TrayMenu.Delete()
+A_TrayMenu.Add("메모 관리", (*) => ManagerWindow.Show())
 A_TrayMenu.Add("새 메모", (*) => MemoWindowManager.Open())
-A_TrayMenu.Add("바탕화면 레이어 테스트", (*) => TestDesktopLayer())
-A_TrayMenu.Add("모든 창 닫기", (*) => MemoWindowManager.CloseAll())
+A_TrayMenu.Add("모든 메모 숨김", HideAllMemos)
 A_TrayMenu.Add("종료", (*) => ExitApp())
-A_TrayMenu.Default := "새 메모"
-A_TrayMenu.ClickCount := 1
+A_TrayMenu.Default := "메모 관리"
+A_TrayMenu.ClickCount := 2
 
 ^!n::MemoWindowManager.Open()
 
-; 시작 시 복원 또는 빈 메모 1개
-if (AppConfig.Has("restoreOpenWindows") && AppConfig["restoreOpenWindows"]) {
-    ids := WindowStateStore.AllIds()
-    if (ids.Length > 0) {
-        for id in ids
-            MemoWindowManager.Open(id, true)
-    } else {
-        MemoWindowManager.Open()
-    }
-} else {
-    MemoWindowManager.Open()
+; Firestore host opens only desktopVisible=true memos. The manager stays hidden.
+AppHost.Start()
+
+HideAllMemos(*) {
+    AppHost.HideAllVisible()
+    MemoWindowManager.CloseAll()
 }
 
 LoadAppConfig() {
     global AppConfig
     path := A_ScriptDir "\config.json"
     if !FileExist(path) {
-        AppConfig := Map("desktopLayer", true, "defaultWidth", 300, "defaultHeight", 320, "restoreOpenWindows", true)
+        AppConfig := Map("desktopLayer", false, "defaultWidth", 300, "defaultHeight", 320, "restoreOpenWindows", false)
         return
     }
     try {
         AppConfig := JSON.parse(FileRead(path, "UTF-8"), , true)
     } catch {
-        AppConfig := Map("desktopLayer", true, "defaultWidth", 300, "defaultHeight", 320)
+        AppConfig := Map("desktopLayer", false, "defaultWidth", 300, "defaultHeight", 320, "restoreOpenWindows", false)
     }
 }
 
@@ -64,5 +63,6 @@ TestDesktopLayer() {
 }
 
 OnExit(*) {
+    ShowDesktopOverride.Stop()
     WindowStateStore.Save()
 }
