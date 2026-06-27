@@ -98,10 +98,11 @@ class MemoWindow {
         this.wv := this.wvc.CoreWebView2
 
         settings := this.wv.Settings
+        settings.AreDevToolsEnabled := false
         settings.AreDefaultContextMenusEnabled := false
         settings.IsZoomControlEnabled := false
         settings.IsStatusBarEnabled := false
-        settings.AreBrowserAcceleratorKeysEnabled := true
+        settings.AreBrowserAcceleratorKeysEnabled := false
 
         this.wv.add_WebMessageReceived((sender, args) => this.OnWebMessage(sender, args))
 
@@ -156,6 +157,7 @@ class MemoWindow {
         this.PushEvent("hostConfig", Map(
             "memoId", this.id,
             "desktopLayer", this.useDesktopLayer,
+            "host", MemoWindowManager.GetHostInfo(),
             "bounds", bounds
         ))
         this.PushEvent("windowBounds", bounds)

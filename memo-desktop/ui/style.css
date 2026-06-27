@@ -199,6 +199,12 @@ textarea {
     linear-gradient(135deg, rgba(255, 238, 144, 0.42), transparent 36%),
     linear-gradient(180deg, #f7f1d9, var(--manager-bg));
   color: #302d24;
+  user-select: none;
+}
+
+.manager-shell input,
+.manager-shell textarea {
+  user-select: text;
 }
 
 .manager-header {
@@ -343,16 +349,28 @@ textarea {
   display: inline-flex;
   align-items: center;
   height: 22px;
+  border: 0;
   border-radius: 999px;
   background: #fff0a2;
   color: #65510f;
+  cursor: pointer;
   font-size: 11px;
   padding: 0 8px;
+  transition: background 140ms ease, color 140ms ease, filter 140ms ease;
 }
 
 .visible-pill.off {
   background: #ece7d6;
   color: #7e7460;
+}
+
+.visible-pill:hover {
+  filter: brightness(1.04);
+}
+
+.visible-pill:focus-visible {
+  outline: 2px solid rgba(121, 92, 10, 0.38);
+  outline-offset: 2px;
 }
 
 .memo-row-actions {
@@ -364,58 +382,6 @@ textarea {
 .memo-row-actions .danger-button:hover {
   background: #f2d5cf;
   color: var(--danger);
-}
-
-.toggle-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.toggle-switch input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.toggle-track {
-  position: relative;
-  width: 48px;
-  height: 26px;
-  border: 1px solid rgba(79, 66, 32, 0.18);
-  border-radius: 999px;
-  background: #e9e2cf;
-  transition: background 160ms ease, border-color 160ms ease;
-}
-
-.toggle-thumb {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fffaf0;
-  box-shadow: 0 1px 3px rgba(64, 52, 20, 0.2);
-  transition: transform 160ms ease;
-}
-
-.toggle-switch input:checked + .toggle-track {
-  border-color: rgba(121, 92, 10, 0.32);
-  background: #ffe578;
-}
-
-.toggle-switch input:checked + .toggle-track .toggle-thumb {
-  transform: translateX(22px);
-}
-
-.toggle-label {
-  width: 28px;
-  color: #65510f;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .empty-state {

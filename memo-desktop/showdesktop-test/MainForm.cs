@@ -6,6 +6,11 @@ public sealed class MainForm : Form
 {
     private const int HotkeySnapshot = 101;
     private const int HotkeyProbe = 102;
+    private static readonly Color NoteBackColor = Color.FromArgb(255, 245, 176);
+    private static readonly Color NoteHeaderColor = Color.FromArgb(255, 232, 122);
+    private static readonly Color NoteBorderColor = Color.FromArgb(214, 190, 103);
+    private static readonly Color InkColor = Color.FromArgb(66, 58, 38);
+    private static readonly Color MutedInkColor = Color.FromArgb(120, 108, 78);
 
     private readonly Label _hwndValue = new();
     private readonly Label _visibleValue = new();
@@ -29,10 +34,12 @@ public sealed class MainForm : Form
     {
         Text = "Show Desktop Test";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(720, 520);
-        Size = new Size(860, 620);
+        MinimumSize = new Size(420, 500);
+        Size = new Size(520, 680);
         TopMost = false;
         ShowInTaskbar = true;
+        FormBorderStyle = FormBorderStyle.None;
+        BackColor = NoteBorderColor;
 
         BuildLayout();
 
@@ -97,53 +104,116 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        var root = new TableLayoutPanel
+        var root = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = NoteBorderColor,
+            Padding = new Padding(1),
+        };
+
+        var noteSurface = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = NoteBackColor,
+            ColumnCount = 1,
+            RowCount = 4,
+            Padding = new Padding(0),
+        };
+        noteSurface.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        noteSurface.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var header = new Panel
+        {
+            Dock = DockStyle.Top,
+            BackColor = NoteHeaderColor,
+            Height = 34,
+            Margin = Padding.Empty,
+        };
+        EnableWindowDrag(header);
+
+        var summaryPanel = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 14,
+            Padding = Padding.Empty,
+            BackColor = NoteBackColor,
+            Margin = Padding.Empty,
+        };
+
+        var noteBody = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 3,
-            Padding = new Padding(14),
+            Padding = new Padding(18, 0, 18, 18),
+            BackColor = NoteBackColor,
+            Margin = Padding.Empty,
         };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        noteBody.RowStyles.Add(new RowStyle(SizeType.Percent, 52));
+        noteBody.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        noteBody.RowStyles.Add(new RowStyle(SizeType.Percent, 48));
 
-        var statusGrid = new TableLayoutPanel
+        var memoCard = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(255, 249, 198),
+            Padding = new Padding(16, 14, 16, 14),
+            Margin = new Padding(0, 0, 0, 14),
+        };
+
+        _probeText.Dock = DockStyle.Fill;
+        _probeText.Multiline = true;
+        _probeText.ScrollBars = ScrollBars.Vertical;
+        _probeText.WordWrap = true;
+        _probeText.BorderStyle = BorderStyle.None;
+        _probeText.BackColor = memoCard.BackColor;
+        _probeText.ForeColor = InkColor;
+        _probeText.Font = new Font("Segoe UI", 10.5f, FontStyle.Regular);
+        _probeText.Text = string.Empty;
+
+        memoCard.Controls.Add(_probeText);
+
+        var statusCard = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
+            BackColor = Color.FromArgb(255, 241, 164),
             AutoSize = true,
             ColumnCount = 4,
             RowCount = 5,
+            Padding = new Padding(14, 12, 14, 10),
+            Margin = new Padding(0, 0, 0, 14),
         };
-        statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-        statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-        statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        statusCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+        statusCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        statusCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+        statusCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
 
-        AddStatus(statusGrid, 0, 0, "HWND", _hwndValue);
-        AddStatus(statusGrid, 2, 0, "Mode", _modeValue);
-        AddStatus(statusGrid, 0, 1, "Visible", _visibleValue);
-        AddStatus(statusGrid, 2, 1, "Minimized", _minimizedValue);
-        AddStatus(statusGrid, 0, 2, "Cloaked", _cloakedValue);
-        AddStatus(statusGrid, 2, 2, "Z rank", _rankValue);
-        AddStatus(statusGrid, 0, 3, "Pixel", _pixelValue);
-        AddStatus(statusGrid, 2, 3, "Beacon", new Label { Text = "fuchsia square", AutoSize = true, Padding = new Padding(0, 4, 8, 4) });
-        AddStatus(statusGrid, 0, 4, "Last event", _lastEventValue);
-        AddStatus(statusGrid, 2, 4, "Last action", _lastActionValue);
+        AddStatus(statusCard, 0, 0, "HWND", _hwndValue);
+        AddStatus(statusCard, 2, 0, "Mode", _modeValue);
+        AddStatus(statusCard, 0, 1, "Visible", _visibleValue);
+        AddStatus(statusCard, 2, 1, "Minimized", _minimizedValue);
+        AddStatus(statusCard, 0, 2, "Cloaked", _cloakedValue);
+        AddStatus(statusCard, 2, 2, "Z rank", _rankValue);
+        AddStatus(statusCard, 0, 3, "Pixel", _pixelValue);
+        AddStatus(statusCard, 2, 3, "Beacon", new Label { Text = "fuchsia square", AutoSize = true, Padding = new Padding(0, 4, 8, 4), ForeColor = InkColor });
+        AddStatus(statusCard, 0, 4, "Last event", _lastEventValue);
+        AddStatus(statusCard, 2, 4, "Last action", _lastActionValue);
 
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
-            Padding = new Padding(0, 12, 0, 12),
+            Padding = new Padding(0),
+            BackColor = NoteBackColor,
+            Margin = Padding.Empty,
         };
 
         _beaconPanel.BackColor = Color.Fuchsia;
-        _beaconPanel.Size = new Size(60, 28);
-        _beaconPanel.Margin = new Padding(0, 3, 14, 3);
+        _beaconPanel.Size = new Size(26, 26);
+        _beaconPanel.Margin = new Padding(0, 8, 12, 0);
 
         _snapshotButton.Text = "Snapshot";
-        _snapshotButton.AutoSize = true;
+        ConfigureActionButton(_snapshotButton);
         _snapshotButton.Click += (_, _) =>
         {
             _controller?.CaptureSnapshot("manual");
@@ -152,7 +222,7 @@ public sealed class MainForm : Form
         };
 
         _probeButton.Text = "Probe";
-        _probeButton.AutoSize = true;
+        ConfigureActionButton(_probeButton);
         _probeButton.Click += (_, _) =>
         {
             _probeText.Text = _controller?.ProbeTargets("button") ?? string.Empty;
@@ -160,7 +230,7 @@ public sealed class MainForm : Form
         };
 
         _clearLogButton.Text = "Clear Log";
-        _clearLogButton.AutoSize = true;
+        ConfigureActionButton(_clearLogButton);
         _clearLogButton.Click += (_, _) =>
         {
             _controller?.ClearLog();
@@ -170,15 +240,14 @@ public sealed class MainForm : Form
 
         buttons.Controls.AddRange(new Control[] { _beaconPanel, _snapshotButton, _probeButton, _clearLogButton });
 
-        _probeText.Dock = DockStyle.Fill;
-        _probeText.Multiline = true;
-        _probeText.ScrollBars = ScrollBars.Both;
-        _probeText.WordWrap = false;
-        _probeText.Font = new Font(FontFamily.GenericMonospace, 9f);
+        noteBody.Controls.Add(memoCard, 0, 0);
+        noteBody.Controls.Add(statusCard, 0, 1);
+        noteBody.Controls.Add(buttons, 0, 2);
 
-        root.Controls.Add(statusGrid, 0, 0);
-        root.Controls.Add(buttons, 0, 1);
-        root.Controls.Add(_probeText, 0, 2);
+        noteSurface.Controls.Add(header, 0, 0);
+        noteSurface.Controls.Add(summaryPanel, 0, 1);
+        noteSurface.Controls.Add(noteBody, 0, 2);
+        root.Controls.Add(noteSurface);
         Controls.Add(root);
     }
 
@@ -190,14 +259,47 @@ public sealed class MainForm : Form
             AutoSize = true,
             Anchor = AnchorStyles.Left,
             Padding = new Padding(0, 4, 8, 4),
+            Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+            ForeColor = InkColor,
         };
 
         value.AutoSize = true;
         value.Anchor = AnchorStyles.Left;
         value.Padding = new Padding(0, 4, 8, 4);
+        value.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+        value.ForeColor = InkColor;
 
         grid.Controls.Add(name, labelColumn, row);
         grid.Controls.Add(value, labelColumn + 1, row);
+    }
+
+    private static void ConfigureActionButton(Button button)
+    {
+        button.AutoSize = true;
+        button.BackColor = Color.FromArgb(255, 250, 220);
+        button.ForeColor = InkColor;
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderColor = NoteBorderColor;
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(245, 226, 140);
+        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(250, 235, 160);
+        button.Padding = new Padding(10, 6, 10, 6);
+        button.Margin = new Padding(0, 0, 8, 0);
+    }
+
+    private void EnableWindowDrag(Control control)
+    {
+        control.MouseDown += BeginWindowDrag;
+        foreach (Control child in control.Controls)
+            child.MouseDown += BeginWindowDrag;
+    }
+
+    private void BeginWindowDrag(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        NativeMethods.ReleaseCapture();
+        NativeMethods.SendMessage(Handle, NativeMethods.WM_NCLBUTTONDOWN, new IntPtr(NativeMethods.HTCAPTION), IntPtr.Zero);
     }
 
     private void RefreshStatus()
@@ -223,16 +325,6 @@ public sealed class MainForm : Form
         _modeValue.Text = _controller.InShowDesktop ? "Show Desktop active" : "Normal";
         _lastEventValue.Text = Truncate(_controller.LastEventText, 44);
         _lastActionValue.Text = Truncate(_controller.LastActionText, 44);
-
-        if (string.IsNullOrWhiteSpace(_probeText.Text))
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("Ready.");
-            sb.AppendLine($"Log: {_controller.LogPath}");
-            sb.AppendLine("Recommended: Calculator -> this app -> Paint, wait 1 second, press Ctrl+Alt+S.");
-            sb.AppendLine("Then Win+D. If this app disappears, press Ctrl+Alt+P to probe/log and try recovery.");
-            _probeText.Text = sb.ToString();
-        }
     }
 
     private void RegisterHotkeys()

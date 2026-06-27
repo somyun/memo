@@ -23,14 +23,18 @@ class ManagerWindow {
         this.gui := Gui("+Resize +MinSize640x420", "Memo Manager")
         this.gui.OnEvent("Close", (*) => this.OnClose())
         this.gui.OnEvent("Size", (*) => this.OnSize())
-        this.gui.Show("w860 h560")
+        this.gui.Show("w640 h560")
 
         dllPath := A_ScriptDir "\lib\" (A_PtrSize = 8 ? "64bit" : "32bit") "\WebView2Loader.dll"
         this.wvc := WebView2.create(this.gui.Hwnd, , MemoWindow.environment, , , , dllPath)
         this.wvc.IsVisible := true
         this.wv := this.wvc.CoreWebView2
-        this.wv.Settings.AreDefaultContextMenusEnabled := false
-        this.wv.Settings.IsStatusBarEnabled := false
+        settings := this.wv.Settings
+        settings.AreDevToolsEnabled := false
+        settings.AreDefaultContextMenusEnabled := false
+        settings.IsZoomControlEnabled := false
+        settings.IsStatusBarEnabled := false
+        settings.AreBrowserAcceleratorKeysEnabled := false
         this.wv.add_WebMessageReceived((sender, args) => this.OnWebMessage(sender, args))
         this.wv.Navigate(this.BuildUri())
 

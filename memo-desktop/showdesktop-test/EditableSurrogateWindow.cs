@@ -2,6 +2,12 @@ namespace ShowDesktopTest;
 
 internal sealed class EditableSurrogateWindow : Form
 {
+    private static readonly Color NoteBackColor = Color.FromArgb(255, 245, 176);
+    private static readonly Color NoteHeaderColor = Color.FromArgb(255, 232, 122);
+    private static readonly Color NoteBorderColor = Color.FromArgb(214, 190, 103);
+    private static readonly Color InkColor = Color.FromArgb(66, 58, 38);
+    private static readonly Color MutedInkColor = Color.FromArgb(120, 108, 78);
+
     private readonly Func<string> _readText;
     private readonly Action<string> _writeText;
     private readonly Func<Rectangle> _readBounds;
@@ -24,12 +30,12 @@ internal sealed class EditableSurrogateWindow : Form
 
         Text = "Show Desktop Test";
         ShowInTaskbar = false;
-        FormBorderStyle = FormBorderStyle.Sizable;
+        FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
         MinimizeBox = false;
         MaximizeBox = true;
         MinimumSize = new Size(320, 220);
-        BackColor = SystemColors.Control;
+        BackColor = NoteBorderColor;
 
         BuildLayout();
     }
@@ -161,33 +167,63 @@ internal sealed class EditableSurrogateWindow : Form
 
     private void BuildLayout()
     {
-        var root = new TableLayoutPanel
+        var root = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = NoteBorderColor,
+            Padding = new Padding(1),
+        };
+
+        var noteSurface = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
-            Padding = new Padding(14),
+            RowCount = 3,
+            BackColor = NoteBackColor,
         };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        noteSurface.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        noteSurface.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        var header = new FlowLayoutPanel
+        var header = new Panel
+        {
+            Dock = DockStyle.Top,
+            BackColor = NoteHeaderColor,
+            Height = 34,
+            Margin = Padding.Empty,
+        };
+        EnableWindowDrag(header);
+
+        var topStrip = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
-            Padding = new Padding(0, 0, 0, 12),
+            Padding = new Padding(16, 10, 16, 8),
+            BackColor = NoteBackColor,
+            Margin = Padding.Empty,
         };
 
         _beaconPanel.BackColor = Color.Fuchsia;
-        _beaconPanel.Size = new Size(60, 28);
-        _beaconPanel.Margin = new Padding(0, 3, 14, 3);
-        header.Controls.Add(_beaconPanel);
+        _beaconPanel.Size = new Size(22, 22);
+        _beaconPanel.Margin = new Padding(0, 3, 10, 3);
+        topStrip.Controls.Add(_beaconPanel);
+
+        var editorHost = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(255, 249, 198),
+            Padding = new Padding(16, 8, 16, 16),
+            Margin = new Padding(16, 0, 16, 16),
+        };
 
         _editor.Dock = DockStyle.Fill;
         _editor.Multiline = true;
-        _editor.ScrollBars = ScrollBars.Both;
-        _editor.WordWrap = false;
-        _editor.Font = new Font(FontFamily.GenericMonospace, 9f);
+        _editor.ScrollBars = ScrollBars.Vertical;
+        _editor.WordWrap = true;
+        _editor.BorderStyle = BorderStyle.None;
+        _editor.BackColor = editorHost.BackColor;
+        _editor.ForeColor = InkColor;
+        _editor.Font = new Font("Segoe UI", 10.5f, FontStyle.Regular);
+        _editor.Text = string.Empty;
         _editor.AcceptsReturn = true;
         _editor.AcceptsTab = true;
         _editor.TextChanged += (_, _) =>
@@ -198,8 +234,12 @@ internal sealed class EditableSurrogateWindow : Form
             _writeText(_editor.Text);
         };
 
-        root.Controls.Add(header, 0, 0);
-        root.Controls.Add(_editor, 0, 1);
+        editorHost.Controls.Add(_editor);
+
+        noteSurface.Controls.Add(header, 0, 0);
+        noteSurface.Controls.Add(topStrip, 0, 1);
+        noteSurface.Controls.Add(editorHost, 0, 2);
+        root.Controls.Add(noteSurface);
         Controls.Add(root);
     }
 
@@ -244,6 +284,22 @@ internal sealed class EditableSurrogateWindow : Form
             ScreenBounds = Bounds;
             _writeBounds(Bounds);
         }
+    }
+
+    private void EnableWindowDrag(Control control)
+    {
+        control.MouseDown += BeginWindowDrag;
+        foreach (Control child in control.Controls)
+            child.MouseDown += BeginWindowDrag;
+    }
+
+    private void BeginWindowDrag(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        NativeMethods.ReleaseCapture();
+        NativeMethods.SendMessage(Handle, NativeMethods.WM_NCLBUTTONDOWN, new IntPtr(NativeMethods.HTCAPTION), IntPtr.Zero);
     }
 
     private static Rectangle NormalizeBounds(Rectangle preferredBounds, Rectangle fallbackBounds)

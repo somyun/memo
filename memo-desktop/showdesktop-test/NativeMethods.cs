@@ -46,6 +46,7 @@ internal static class NativeMethods
     public const uint GW_OWNER = 4;
 
     public const int SW_SHOWNOACTIVATE = 4;
+    public const int SW_HIDE = 0;
     public const int SW_RESTORE = 9;
 
     public static readonly IntPtr HWND_TOP = IntPtr.Zero;
@@ -87,6 +88,8 @@ internal static class NativeMethods
     }
 
     public const int WM_HOTKEY = 0x0312;
+    public const int WM_NCLBUTTONDOWN = 0x00A1;
+    public const int HTCAPTION = 2;
     public const uint MOD_ALT = 0x0001;
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_NOREPEAT = 0x4000;
@@ -205,6 +208,13 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern int GetWindowText(IntPtr hwnd, StringBuilder lpString, int nMaxCount);

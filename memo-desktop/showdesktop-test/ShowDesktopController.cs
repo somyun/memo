@@ -377,7 +377,7 @@ internal sealed class ShowDesktopController : IDisposable
 
         _ = Task.Run(async () =>
         {
-            await Task.Delay(250).ConfigureAwait(false);
+            await Task.Delay(125).ConfigureAwait(false);
             if (_context is not null)
                 _context.Post(_ => RestoreAfterShowDesktop(reason), null);
             else
@@ -472,7 +472,7 @@ internal sealed class ShowDesktopController : IDisposable
     {
         _ = Task.Run(async () =>
         {
-            await Task.Delay(450).ConfigureAwait(false);
+            await Task.Delay(225).ConfigureAwait(false);
             if (_context is not null)
                 _context.Post(_ => RestoreZOrderAfterShellSettle(reason, generation), null);
             else
@@ -527,7 +527,7 @@ internal sealed class ShowDesktopController : IDisposable
         }
 
         var now = DateTimeOffset.Now;
-        if (now - _lastEnsureAt < TimeSpan.FromMilliseconds(120))
+        if (now - _lastEnsureAt < TimeSpan.FromMilliseconds(60))
             return;
 
         _lastEnsureAt = now;

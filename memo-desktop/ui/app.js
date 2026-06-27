@@ -11,6 +11,7 @@ const firebaseConfig = {
 
 let db = null;
 let firebaseInitError = '';
+let desktopHost = { machineKey: 'default', machineName: '', localInstallId: '' };
 
 function reportClientError(message, extra = {}) {
   try {
@@ -91,6 +92,26 @@ function defaultBounds() {
   return { x: 120, y: 120, w: 300, h: 320 };
 }
 
+function normalizeMachineKey(value, fallback = 'default') {
+  return String(value || '').replace(/[^A-Za-z0-9_-]/g, '_').toLowerCase() || fallback;
+}
+
+function applyHostConfig(params = {}) {
+  const host = params.host || params;
+  const localInstallId = normalizeMachineKey(host.localInstallId || '', '');
+  desktopHost = {
+    machineKey: localInstallId || normalizeMachineKey(host.machineKey || desktopHost.machineKey),
+    machineName: String(host.machineName || desktopHost.machineName || ''),
+    localInstallId: localInstallId || desktopHost.localInstallId || '',
+  };
+}
+
+function boundsForCurrentMachine(data) {
+  const byMachine = data.desktopBoundsByMachine || {};
+  const machineBounds = byMachine[desktopHost.machineKey];
+  return machineBounds || data.desktopBounds || null;
+}
+
 function normalizeMemo(doc) {
   const data = doc.data() || {};
   return {
@@ -106,6 +127,10 @@ function normalizeMemo(doc) {
     updated: data.updated || data.created || now(),
     desktopVisible: data.desktopVisible === true,
     desktopBounds: data.desktopBounds || null,
+    currentDesktopBounds: boundsForCurrentMachine(data),
+    desktopBoundsByMachine: data.desktopBoundsByMachine && typeof data.desktopBoundsByMachine === 'object'
+      ? data.desktopBoundsByMachine
+      : {},
     desktopUpdated: data.desktopUpdated || 0,
   };
 }
@@ -124,6 +149,7 @@ function baseMemo(id, text = '') {
     updated: ts,
     desktopVisible: true,
     desktopBounds: defaultBounds(),
+    desktopBoundsByMachine: {},
     desktopUpdated: ts,
   };
 }
@@ -155,14 +181,16 @@ function mountHost() {
   createApp({
     setup() {
       let unsub = null;
+      let lastSnapshot = null;
 
       const syncVisible = (snapshot) => {
+        lastSnapshot = snapshot;
         const items = snapshot.docs
           .map(normalizeMemo)
           .filter((memo) => memo.desktopVisible)
           .map((memo) => ({
             id: memo.id,
-            bounds: memo.desktopBounds || null,
+            bounds: memo.currentDesktopBounds,
             pinned: memo.desktopPinned,
             pinnedAt: memo.desktopPinnedAt || 0,
           }));
@@ -180,6 +208,10 @@ function mountHost() {
 
       onMounted(() => {
         Bridge.onMessage((msg) => {
+          if (msg?.method === 'hostConfig' && msg.params) {
+            applyHostConfig(msg.params);
+            if (lastSnapshot) syncVisible(lastSnapshot);
+          }
           if (msg?.method === 'hideAllVisible') {
             hideAll();
           }
@@ -251,15 +283,23 @@ function mountManager() {
         }
       };
 
-      const toggleMemo = async (memo, event) => {
-        const visible = event.target.checked;
+      const setMemoVisible = async (memo, visible) => {
         try {
           await setDesktopVisible(memo.id, visible);
           status.value = visible ? '메모 표시 요청됨' : '메모 숨김 요청됨';
           statusError.value = false;
         } catch (error) {
-          event.target.checked = !visible;
           setError(visible ? '표시 실패' : '숨김 실패', error);
+        }
+      };
+
+      const toggleMemo = (memo) => {
+        setMemoVisible(memo, !memo.desktopVisible);
+      };
+
+      const showMemo = (memo) => {
+        if (!memo.desktopVisible) {
+          setMemoVisible(memo, true);
         }
       };
 
@@ -306,6 +346,7 @@ function mountManager() {
         formatDate,
         createMemo,
         toggleMemo,
+        showMemo,
         deleteMemo,
       };
     },
@@ -337,26 +378,22 @@ function mountManager() {
         <p v-if="statusError" class="status-banner">{{ status }}</p>
 
         <section class="memo-list">
-          <article v-for="memo in filteredMemos" :key="memo.id" class="memo-row">
+          <article v-for="memo in filteredMemos" :key="memo.id" class="memo-row" @dblclick="showMemo(memo)">
             <div class="memo-row-main">
-              <span class="visible-pill" :class="{ off: !memo.desktopVisible }">
+              <button
+                class="visible-pill"
+                :class="{ off: !memo.desktopVisible }"
+                type="button"
+                :title="memo.desktopVisible ? '숨김으로 전환' : '표시로 전환'"
+                :aria-pressed="memo.desktopVisible ? 'true' : 'false'"
+                @click.stop="toggleMemo(memo)"
+              >
                 {{ memo.desktopVisible ? '표시중' : '숨김' }}
-              </span>
+              </button>
               <p>{{ memo.text.trim() || '(빈 메모)' }}</p>
               <time>{{ formatDate(memo.updated) }}</time>
             </div>
             <div class="memo-row-actions">
-              <label class="toggle-switch" :title="memo.desktopVisible ? '숨김으로 전환' : '표시로 전환'">
-                <input
-                  type="checkbox"
-                  :checked="memo.desktopVisible"
-                  @change="toggleMemo(memo, $event)"
-                >
-                <span class="toggle-track">
-                  <span class="toggle-thumb"></span>
-                </span>
-                <span class="toggle-label">{{ memo.desktopVisible ? '표시' : '숨김' }}</span>
-              </label>
               <button class="danger-button" type="button" @click="deleteMemo(memo)">삭제</button>
             </div>
           </article>
@@ -466,9 +503,17 @@ function mountMemo(memoId, createIfMissing = false) {
         if (!lastBounds) return;
         try {
           if (memoRef) {
+            const key = normalizeMachineKey(desktopHost.machineKey);
+            const ts = now();
             await memoRef.set({
               desktopBounds: lastBounds,
-              desktopUpdated: now(),
+              [`desktopBoundsByMachine.${key}`]: lastBounds,
+              [`desktopBoundsHostMeta.${key}`]: {
+                machineName: desktopHost.machineName,
+                localInstallId: desktopHost.localInstallId || key,
+                updated: ts,
+              },
+              desktopUpdated: ts,
             }, { merge: true });
           }
           Bridge.event('persistBounds', lastBounds);
@@ -516,6 +561,9 @@ function mountMemo(memoId, createIfMissing = false) {
 
       onMounted(() => {
         Bridge.onMessage((msg) => {
+          if (msg?.method === 'hostConfig' && msg.params) {
+            applyHostConfig(msg.params);
+          }
           if (msg?.method === 'windowBounds' && msg.params) {
             scheduleBoundsSave(msg.params);
           }

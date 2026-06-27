@@ -10,6 +10,7 @@ internal sealed class DesktopLayerFallback
     private long _originalExStyle;
     private bool _mainWindowReparented;
     private bool _preferTopLevelSurrogate = true;
+    private bool _mainWindowHiddenForSurrogate;
 
     public DesktopLayerFallback(
         IntPtr hwnd,
@@ -152,6 +153,7 @@ internal sealed class DesktopLayerFallback
         if (!_mainWindowReparented)
         {
             _surrogate.HideAndDestroy();
+            RestoreMainWindowIfHidden();
             var targetOnly = TargetParent;
             var modeOnly = Mode;
             IsAttached = false;
@@ -259,7 +261,26 @@ internal sealed class DesktopLayerFallback
         Mode = "top-level-surrogate";
         TargetParent = IntPtr.Zero;
         _mainWindowReparented = false;
+        HideMainWindowForSurrogate();
         return new DesktopAttachResult(true, Mode, TargetParent, "top-level-surrogate-pixel-visible", attempts.ToArray());
+    }
+
+    private void HideMainWindowForSurrogate()
+    {
+        if (_mainWindowHiddenForSurrogate)
+            return;
+
+        NativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_HIDE);
+        _mainWindowHiddenForSurrogate = true;
+    }
+
+    private void RestoreMainWindowIfHidden()
+    {
+        if (!_mainWindowHiddenForSurrogate)
+            return;
+
+        NativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_SHOWNOACTIVATE);
+        _mainWindowHiddenForSurrogate = false;
     }
 
     private void ForceRepaint()

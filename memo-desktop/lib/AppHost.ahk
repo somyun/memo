@@ -28,8 +28,12 @@ class AppHost {
         this.wvc := WebView2.create(this.gui.Hwnd, , MemoWindow.environment, , , , dllPath)
         this.wvc.IsVisible := false
         this.wv := this.wvc.CoreWebView2
-        this.wv.Settings.AreDefaultContextMenusEnabled := false
-        this.wv.Settings.IsStatusBarEnabled := false
+        settings := this.wv.Settings
+        settings.AreDevToolsEnabled := false
+        settings.AreDefaultContextMenusEnabled := false
+        settings.IsZoomControlEnabled := false
+        settings.IsStatusBarEnabled := false
+        settings.AreBrowserAcceleratorKeysEnabled := false
         this.wv.add_WebMessageReceived((sender, args) => this.OnWebMessage(sender, args))
         this.wv.Navigate(this.BuildUri())
     }
@@ -53,7 +57,7 @@ class AppHost {
 
     OnWebReady(params) {
         try FileAppend("[" A_Now "] host ready`n", A_ScriptDir "\..\debug-013048.log", "UTF-8")
-        this.PushEvent("hostConfig", Map("mode", "host"))
+        this.PushEvent("hostConfig", Map("mode", "host", "host", MemoWindowManager.GetHostInfo()))
     }
 
     PushEvent(method, params) {
