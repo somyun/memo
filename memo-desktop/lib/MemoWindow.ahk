@@ -234,16 +234,23 @@ class MemoWindow {
         WindowStateStore.Set(this.id, params)
     }
 
-    SetPinnedState(pinned, pinnedAt := 0) {
-        this.pinned := !!pinned
-        this.pinnedAt := pinnedAt ? pinnedAt : 0
+    SetPinnedState(pinned, pinnedAt := 0, force := false) {
+        nextPinned := !!pinned
+        nextPinnedAt := pinnedAt ? pinnedAt : 0
+        changed := this.pinned != nextPinned || this.pinnedAt != nextPinnedAt
+        if (!changed && !force)
+            return false
+
+        this.pinned := nextPinned
+        this.pinnedAt := nextPinnedAt
         if !this.gui
-            return
+            return changed
         this.Log("pinned=" (this.pinned ? "true" : "false") " pinnedAt=" this.pinnedAt)
         if this.pinned
             WinSetAlwaysOnTop(1, "ahk_id " this.gui.Hwnd)
         else
             WinSetAlwaysOnTop(0, "ahk_id " this.gui.Hwnd)
+        return changed
     }
 
     RaisePinned() {

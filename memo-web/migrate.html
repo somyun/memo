@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>JSONBin → Firestore 마이그레이션</title>
+  <style>
+    body { font-family: '맑은 고딕', system-ui; padding: 40px; background: #1a1a2e; color: #e0e0e0; }
+    h2 { color: #fef9c3; }
+    #log { background: #16213e; padding: 16px; border-radius: 8px; margin: 16px 0; min-height: 100px; font-size: 14px; line-height: 1.8; white-space: pre-wrap; }
+    button { background: #e94560; color: #fff; border: none; padding: 12px 28px; font-size: 15px; border-radius: 6px; cursor: pointer; }
+    button:hover { background: #c81e45; }
+    button:disabled { background: #555; cursor: not-allowed; }
+    .ok { color: #4ade80; }
+    .warn { color: #fbbf24; }
+    .err { color: #f87171; }
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+</head>
+<body>
+
+<h2>📦 JSONBin.io → Firestore 마이그레이션</h2>
+<p>기존 JSONBin.io에 저장된 메모 데이터를 Firebase Firestore로 이전합니다.</p>
+<button id="btn" onclick="startMigration()">🚀 마이그레이션 시작</button>
+<div id="log"></div>
+
+<script>
+  /* ── Firebase ── */
+  firebase.initializeApp({
+    apiKey: "AIzaSyBdJN2qn4Gox8jpIm8ZfPxzeoIU0G_eA-o",
+    authDomain: "memo-3a7c8.firebaseapp.com",
+    projectId: "memo-3a7c8",
+    storageBucket: "memo-3a7c8.firebasestorage.app",
+    messagingSenderId: "674466200117",
+    appId: "1:674466200117:web:02cb1572cd0a2597ffcf7c"
+  });
+  const db = firebase.firestore();
+
+  /* ── JSONBin 설정 ── */
+  const JSONBIN_ID  = "6a0226fe250b1311c3363d2e";
+  const JSONBIN_KEY = "$2a$10$O19P5kBlpzUro1ntia5wSeokkANtoGecK5BzwGJMBUpCs8i20Bs3S";
+  const TOKEN_BIN_ID = "6a0580f2c0954111d81febe9";
+
+  function log(msg, cls = "") {
+    const el = document.getElementById("log");
+    if (cls) {
+      el.innerHTML += `<span class="${cls}">${msg}</span>\n`;
+    } else {
+      el.innerHTML += msg + "\n";
+    }
+    el.scrollTop = el.scrollHeight;
+  }
+
+  async function startMigration() {
+    const btn = document.getElementById("btn");
+    btn.disabled = true;
+
+    try {
+      /* 1. JSONBin에서 메모 데이터 가져오기 */
+      log("1️⃣  JSONBin에서 메모 데이터 가져오는 중...");
+      const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
+        headers: { "X-Access-Key": JSONBIN_KEY, "X-Bin-Meta": "false" }
+      });
+      if (!res.ok) throw new Error(`JSONBin 응답 오류: ${res.status}`);
+      const data = await res.json();
+      const memos = data.memos || [];
+      log(`   → ${memos.length}개 메모 발견`, "ok");
+
+      /* 2. GitHub 토큰 가져오기 */
+      log("2️⃣  GitHub 토큰 가져오는 중...");
+      const tokenRes = await fetch(`https://api.jsonbin.io/v3/b/${TOKEN_BIN_ID}/latest`, {
+        headers: { "X-Access-Key": JSONBIN_KEY, "X-Bin-Meta": "false" }
+      });
+      let tokenSaved = false;
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json();
+        if (tokenData.token) {
+          await db.collection("config").doc("github").set({ token: tokenData.token });
+          tokenSaved = true;
+          log("   → GitHub 토큰 Firestore에 저장 완료", "ok");
+        }
+      }
+      if (!tokenSaved) {
+        log("   → GitHub 토큰을 찾지 못했습니다 (수동으로 추가 필요)", "warn");
+      }
+
+      /* 3. Firestore에 메모 저장 */
+      log("3️⃣  Firestore에 메모 저장 중...");
+      const batch = db.batch();
+      for (const memo of memos) {
+        // 필드 보정
+        if (!Array.isArray(memo.files)) memo.files = [];
+        if (typeof memo.pinned !== "boolean") memo.pinned = false;
+
+        const ref = db.collection("memos").doc(memo.id);
+        batch.set(ref, memo);
+
+        const preview = memo.text.substring(0, 40).replace(/\n/g, " ");
+        log(`   📝 "${preview}${memo.text.length > 40 ? '...' : ''}"`, "ok");
+      }
+      await batch.commit();
+      log(`   → ${memos.length}개 메모 Firestore에 저장 완료`, "ok");
+
+      /* 4. 검증 */
+      log("4️⃣  검증 중...");
+      const snapshot = await db.collection("memos").get();
+      log(`   → Firestore에 ${snapshot.size}개 문서 확인`, "ok");
+
+      log("");
+      log("✅ 마이그레이션 완료!", "ok");
+      log("이제 index.html을 Firebase 버전으로 교체하면 됩니다.", "warn");
+
+    } catch (err) {
+      log(`❌ 오류 발생: ${err.message}`, "err");
+      console.error(err);
+      btn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>

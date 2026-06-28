@@ -24,7 +24,8 @@ class MemoWindowManager {
         if this.windows.Has(memoId) {
             win := this.windows[memoId]
             if win.gui && win.ready {
-                win.gui.Show()
+                if (source != "sync")
+                    win.gui.Show()
                 return memoId
             } else if win.gui {
                 ; WebView2 준비 중인 창은 이미 보호 대상이므로 중복 생성하지 않는다.
@@ -60,6 +61,7 @@ class MemoWindowManager {
     static SyncVisible(items) {
         keep := Map()
         this.visibleMeta := Map()
+        pinChanged := false
 
         for item in items {
             id := item.Has("id") ? item["id"] : item
@@ -71,7 +73,8 @@ class MemoWindowManager {
                 win := this.windows[id]
                 pinned := item.Has("pinned") ? item["pinned"] : false
                 pinnedAt := item.Has("pinnedAt") ? item["pinnedAt"] : 0
-                win.SetPinnedState(pinned, pinnedAt)
+                if win.SetPinnedState(pinned, pinnedAt)
+                    pinChanged := true
             }
         }
 
@@ -86,7 +89,8 @@ class MemoWindowManager {
             }
         }
 
-        this.ApplyPinnedZOrder()
+        if pinChanged
+            this.ApplyPinnedZOrder()
     }
 
     static GetBoundsFor(memoId, restoreBounds := true) {
@@ -281,7 +285,7 @@ class MemoWindowManager {
     static EnforcePinnedTopMost() {
         for id, win in this.windows {
             if win.gui
-                win.SetPinnedState(win.pinned, win.pinnedAt)
+                win.SetPinnedState(win.pinned, win.pinnedAt, true)
         }
         this.ApplyPinnedZOrder()
     }
