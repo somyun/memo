@@ -148,6 +148,28 @@ textarea {
   color: rgba(130, 115, 75, 0.62);
 }
 
+.memo-text-rendered {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+.memo-text-rendered:focus-visible {
+  outline: 2px solid rgba(121, 92, 10, 0.34);
+  outline-offset: 2px;
+}
+
+.memo-link {
+  color: #1f5f9e;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.memo-placeholder {
+  color: rgba(130, 115, 75, 0.62);
+}
+
 .memo-footer {
   display: flex;
   align-items: center;

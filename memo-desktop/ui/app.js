@@ -1,4 +1,4 @@
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+const { createApp, ref, computed, onMounted, onUnmounted, nextTick } = Vue;
 
 const firebaseConfig = {
   apiKey: 'AIzaSyBdJN2qn4Gox8jpIm8ZfPxzeoIU0G_eA-o',
@@ -86,6 +86,39 @@ function formatDate(ts) {
   const d = new Date(ts);
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function normalizeLinkHref(url) {
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+}
+
+function trimUrlPunctuation(url) {
+  return String(url || '').replace(/[.,!?;:\)\]\}]+$/g, '');
+}
+
+function linkifyText(text) {
+  const value = String(text || '');
+  const regex = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+  const parts = [];
+  let cursor = 0;
+
+  for (const match of value.matchAll(regex)) {
+    const linkedText = trimUrlPunctuation(match[0]);
+    if (!linkedText) continue;
+
+    const start = match.index;
+    const end = start + linkedText.length;
+    if (start > cursor) {
+      parts.push({ text: value.slice(cursor, start), href: '' });
+    }
+    parts.push({ text: linkedText, href: normalizeLinkHref(linkedText) });
+    cursor = end;
+  }
+
+  if (cursor < value.length) {
+    parts.push({ text: value.slice(cursor), href: '' });
+  }
+  return parts;
 }
 
 function defaultBounds() {
@@ -344,6 +377,7 @@ function mountManager() {
         diagnosticItems,
         filteredMemos,
         formatDate,
+        linkifyText,
         createMemo,
         toggleMemo,
         showMemo,
@@ -390,7 +424,19 @@ function mountManager() {
               >
                 {{ memo.desktopVisible ? '표시중' : '숨김' }}
               </button>
-              <p>{{ memo.text.trim() || '(빈 메모)' }}</p>
+              <p>
+                <template v-for="(part, index) in linkifyText(memo.text.trim() || '(빈 메모)')" :key="index">
+                  <a
+                    v-if="part.href"
+                    class="memo-link"
+                    :href="part.href"
+                    target="_blank"
+                    rel="noopener"
+                    @click.stop
+                  >{{ part.text }}</a>
+                  <span v-else>{{ part.text }}</span>
+                </template>
+              </p>
               <time>{{ formatDate(memo.updated) }}</time>
             </div>
             <div class="memo-row-actions">
@@ -410,6 +456,7 @@ function mountMemo(memoId, createIfMissing = false) {
   createApp({
     setup() {
       const text = ref('');
+      const editing = ref(createIfMissing);
       const pinned = ref(false);
       const updated = ref(now());
       const status = ref(firebaseInitError ? `동기화 오류: ${firebaseInitError}` : '동기화 중...');
@@ -423,7 +470,20 @@ function mountMemo(memoId, createIfMissing = false) {
       let mayCreateMissing = createIfMissing;
 
       const footerText = computed(() => status.value || formatDate(updated.value));
+      const textParts = computed(() => linkifyText(text.value));
       const memoRef = db ? db.collection('memos').doc(memoId) : null;
+
+      const startEditing = () => {
+        editing.value = true;
+        nextTick(() => {
+          const editor = document.querySelector('.memo-text-editor');
+          if (editor) editor.focus();
+        });
+      };
+
+      const stopEditing = () => {
+        editing.value = false;
+      };
 
       const markLocalSave = () => {
         localSaveUntil = now() + 650;
@@ -618,9 +678,13 @@ function mountMemo(memoId, createIfMissing = false) {
 
       return {
         text,
+        editing,
+        textParts,
         pinned,
         footerText,
         statusError,
+        startEditing,
+        stopEditing,
         scheduleTextSave,
         togglePinned,
         hideMemo,
@@ -643,10 +707,36 @@ function mountMemo(memoId, createIfMissing = false) {
           <button class="icon-button close-button" type="button" title="숨김" aria-label="숨김" @click="hideMemo">×</button>
         </div>
         <div class="memo-body">
+          <div
+            v-if="!editing"
+            class="memo-text memo-text-rendered"
+            :class="{ empty: !text }"
+            tabindex="0"
+            @click="startEditing"
+            @keydown.enter.prevent="startEditing"
+            @keydown.f2.prevent="startEditing"
+          >
+            <template v-if="text">
+              <template v-for="(part, index) in textParts" :key="index">
+                <a
+                  v-if="part.href"
+                  class="memo-link"
+                  :href="part.href"
+                  target="_blank"
+                  rel="noopener"
+                  @click.stop
+                >{{ part.text }}</a>
+                <span v-else>{{ part.text }}</span>
+              </template>
+            </template>
+            <span v-else class="memo-placeholder">메모를 입력하세요</span>
+          </div>
           <textarea
-            class="memo-text"
+            v-show="editing"
+            class="memo-text memo-text-editor"
             v-model="text"
             @input="scheduleTextSave"
+            @blur="stopEditing"
             placeholder="메모를 입력하세요"
             spellcheck="false"
           ></textarea>

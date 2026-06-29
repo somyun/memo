@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,11 +42,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -275,6 +281,7 @@ fun MemoCard(
     onAutoFocusHandled: () -> Unit = {}
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var isEditing by remember { mutableStateOf(shouldAutoFocus) }
     var textFieldValue by remember(memo.id) {
         mutableStateOf(TextFieldValue(memo.text, TextRange(memo.text.length)))
     }
@@ -285,6 +292,11 @@ fun MemoCard(
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
         onResult = { uris -> onAttachFiles(uris) }
+    )
+    val memoTextStyle = TextStyle(
+        color = MaterialTheme.colorScheme.onSurface,
+        fontSize = 14.sp,
+        lineHeight = 20.sp
     )
  
     // 외부 변경 반영 (다른 기기에서 수정)
@@ -299,8 +311,15 @@ fun MemoCard(
 
     LaunchedEffect(shouldAutoFocus) {
         if (shouldAutoFocus) {
-            focusRequester.requestFocus()
+            isEditing = true
             onAutoFocusHandled()
+        }
+    }
+
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            delay(40)
+            focusRequester.requestFocus()
         }
     }
 
@@ -349,42 +368,54 @@ fun MemoCard(
             }
 
             // 텍스트 입력
-            BasicTextField(
-                value = textFieldValue,
-                onValueChange = { value ->
-                    textFieldValue = value
-                    if (value.text != memo.text) {
-                        onTextChange(value.text)
-                    }
-                    textLayoutResult?.cursorViewportRect(value.selection.end)?.let { rect ->
-                        coroutineScope.launch {
-                            delay(40)
-                            bringIntoViewRequester.bringIntoView(rect)
+            if (isEditing) {
+                BasicTextField(
+                    value = textFieldValue,
+                    onValueChange = { value ->
+                        textFieldValue = value
+                        if (value.text != memo.text) {
+                            onTextChange(value.text)
                         }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .defaultMinSize(minHeight = 80.dp)
-                    .bringIntoViewRequester(bringIntoViewRequester)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { focusState ->
-                        onFocusChange(focusState.isFocused)
+                        textLayoutResult?.cursorViewportRect(value.selection.end)?.let { rect ->
+                            coroutineScope.launch {
+                                delay(40)
+                                bringIntoViewRequester.bringIntoView(rect)
+                            }
+                        }
                     },
-                onTextLayout = { textLayoutResult = it },
-                textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                decorationBox = { inner ->
-                    if (textFieldValue.text.isEmpty()) {
-                        Text("메모 입력...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 80.dp)
+                        .bringIntoViewRequester(bringIntoViewRequester)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { focusState ->
+                            if (!focusState.isFocused) {
+                                isEditing = false
+                            }
+                            onFocusChange(focusState.isFocused)
+                        },
+                    onTextLayout = { textLayoutResult = it },
+                    textStyle = memoTextStyle,
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner ->
+                        if (textFieldValue.text.isEmpty()) {
+                            Text("메모 입력...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                        }
+                        inner()
                     }
-                    inner()
-                }
-            )
+                )
+            } else {
+                MemoLinkedText(
+                    text = textFieldValue.text,
+                    placeholder = "메모 입력...",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = 80.dp),
+                    style = memoTextStyle,
+                    placeholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    onTextClick = { isEditing = true }
+                )
+            }
 
             // 이미지 목록
             if (memo.images.isNotEmpty()) {
@@ -636,6 +667,122 @@ fun FileAttachmentRow(name: String, url: String, onRemove: () -> Unit) {
             }
         )
     }
+}
+
+private const val MemoUrlAnnotationTag = "MEMO_URL"
+
+private data class MemoUrlRange(
+    val start: Int,
+    val end: Int,
+    val href: String
+)
+
+private val MemoUrlRegex = Regex("""(?:https?://|www\.)[^\s<>"']+""", RegexOption.IGNORE_CASE)
+
+@Composable
+private fun MemoLinkedText(
+    text: String,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle,
+    placeholderColor: Color,
+    onTextClick: () -> Unit
+) {
+    val uriHandler = LocalUriHandler.current
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+
+    if (text.isEmpty()) {
+        Text(
+            text = placeholder,
+            modifier = modifier.pointerInput(Unit) {
+                detectTapGestures { onTextClick() }
+            },
+            style = style.copy(color = placeholderColor)
+        )
+        return
+    }
+
+    val annotatedText = remember(text) { buildMemoAnnotatedText(text) }
+    Text(
+        text = annotatedText,
+        modifier = modifier.pointerInput(annotatedText) {
+            detectTapGestures { offset ->
+                val layout = layoutResult
+                if (layout == null) {
+                    onTextClick()
+                    return@detectTapGestures
+                }
+
+                val textOffset = layout.getOffsetForPosition(offset)
+                val link = annotatedText
+                    .getStringAnnotations(MemoUrlAnnotationTag, textOffset, textOffset)
+                    .firstOrNull()
+
+                if (link != null) {
+                    runCatching { uriHandler.openUri(link.item) }
+                } else {
+                    onTextClick()
+                }
+            }
+        },
+        style = style,
+        onTextLayout = { layoutResult = it }
+    )
+}
+
+private fun buildMemoAnnotatedText(text: String): AnnotatedString {
+    val ranges = findMemoUrlRanges(text)
+    return buildAnnotatedString {
+        var cursor = 0
+        ranges.forEach { range ->
+            if (range.start > cursor) {
+                append(text.substring(cursor, range.start))
+            }
+            pushStringAnnotation(MemoUrlAnnotationTag, range.href)
+            withStyle(
+                SpanStyle(
+                    color = LinkBlue,
+                    textDecoration = TextDecoration.Underline
+                )
+            ) {
+                append(text.substring(range.start, range.end))
+            }
+            pop()
+            cursor = range.end
+        }
+        if (cursor < text.length) {
+            append(text.substring(cursor))
+        }
+    }
+}
+
+private fun findMemoUrlRanges(text: String): List<MemoUrlRange> =
+    MemoUrlRegex.findAll(text).mapNotNull { match ->
+        val linkText = trimUrlPunctuation(match.value)
+        if (linkText.isEmpty()) {
+            null
+        } else {
+            MemoUrlRange(
+                start = match.range.first,
+                end = match.range.first + linkText.length,
+                href = normalizeMemoHref(linkText)
+            )
+        }
+    }.toList()
+
+private fun normalizeMemoHref(url: String): String =
+    if (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) {
+        url
+    } else {
+        "https://$url"
+    }
+
+private fun trimUrlPunctuation(url: String): String {
+    var end = url.length
+    while (end > 0 && url[end - 1] in ".,!?;:)]}") {
+        end -= 1
+    }
+    return url.substring(0, end)
 }
 
 private fun TextLayoutResult.cursorViewportRect(cursorOffset: Int): Rect {

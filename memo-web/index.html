@@ -147,6 +147,37 @@
 
     .card-text::placeholder { color: #bbb; }
 
+    .card-text-shell:not(.is-editing) .card-text {
+      display: none;
+    }
+
+    .card-text-shell.is-editing .card-text-preview {
+      display: none;
+    }
+
+    .card-text-preview {
+      width: 100%;
+      min-height: 260px;
+      font-family: var(--font);
+      font-size: 13px;
+      line-height: 1.68;
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      cursor: text;
+    }
+
+    .card-text-preview .memo-link {
+      color: #3366aa;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .card-text-preview .memo-placeholder {
+      color: #bbb;
+    }
+
     /* ── Delete button ── */
     .delete-btn {
       position: absolute;
@@ -349,6 +380,67 @@
     return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
+  function normalizeLinkHref(url) {
+    return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  }
+
+  function trimUrlPunctuation(url) {
+    return url.replace(/[.,!?;:\)\]\}]+$/g, "");
+  }
+
+  function splitMemoLinks(text) {
+    const value = String(text || "");
+    const regex = /(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+    const parts = [];
+    let cursor = 0;
+
+    for (const match of value.matchAll(regex)) {
+      const raw = match[0];
+      const linkedText = trimUrlPunctuation(raw);
+      if (!linkedText) continue;
+
+      const start = match.index;
+      const end = start + linkedText.length;
+      if (start > cursor) {
+        parts.push({ text: value.slice(cursor, start) });
+      }
+      parts.push({ text: linkedText, href: normalizeLinkHref(linkedText) });
+      cursor = end;
+    }
+
+    if (cursor < value.length) {
+      parts.push({ text: value.slice(cursor) });
+    }
+    return parts;
+  }
+
+  function updateLinkedText(container, text, placeholder = "") {
+    const value = String(text || "");
+    container.replaceChildren();
+
+    if (!value && placeholder) {
+      const span = document.createElement("span");
+      span.className = "memo-placeholder";
+      span.textContent = placeholder;
+      container.appendChild(span);
+      return;
+    }
+
+    splitMemoLinks(value).forEach(part => {
+      if (part.href) {
+        const link = document.createElement("a");
+        link.className = "memo-link";
+        link.href = part.href;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = part.text;
+        container.appendChild(link);
+      } else {
+        container.appendChild(document.createTextNode(part.text));
+      }
+    });
+  }
+
   function newMemoObj(text = '', images = [], files = []) {
     return { id: uid(), text, images, files, pinned: false, created: Date.now(), updated: Date.now() };
   }
@@ -440,13 +532,15 @@
     dateDiv.className = "card-date";
     dateDiv.textContent = formatDate(memo.updated);
 
-    // textarea
-    const ta = buildTextarea(memo.text);
+    // memo text
+    const textShell = buildTextEditor(memo.text);
+    const ta = textShell.textarea;
     ta.oninput = () => {
       memo.text = ta.value;
       memo.updated = Date.now();
       dateDiv.textContent = formatDate(memo.updated);
       autoGrow(ta);
+      textShell.updatePreview();
       scheduleSave(memo);
     };
     ta.addEventListener("paste", e => handlePaste(e, memo, card, ta));
@@ -462,7 +556,7 @@
     memo.files.forEach(f => fileArea.appendChild(buildFileLink(f, memo)));
 
     card.appendChild(del);
-    card.appendChild(ta);
+    card.appendChild(textShell);
     card.appendChild(imgArea);
     card.appendChild(fileArea);
     card.appendChild(dateDiv);
@@ -478,7 +572,8 @@
     card.className = "card card--empty";
     card.dataset.id = "";
 
-    const ta = buildTextarea("");
+    const textShell = buildTextEditor("", { startEditing: true });
+    const ta = textShell.textarea;
     ta.placeholder = "새 메모...";
 
     const imgArea = document.createElement("div");
@@ -512,7 +607,7 @@
       dateDiv.className = "card-date";
       dateDiv.textContent = formatDate(memo.updated);
 
-      card.insertBefore(del, ta);
+      card.insertBefore(del, textShell);
       card.appendChild(dateDiv);
 
       // replace input handler
@@ -521,6 +616,7 @@
         memo.updated = Date.now();
         dateDiv.textContent = formatDate(memo.updated);
         autoGrow(ta);
+        textShell.updatePreview();
         scheduleSave(memo);
       };
       ta.removeEventListener("input", onEmptyInput);
@@ -554,7 +650,7 @@
       }
     });
 
-    card.appendChild(ta);
+    card.appendChild(textShell);
     card.appendChild(imgArea);
     card.appendChild(fileArea);
     return card;
@@ -568,6 +664,51 @@
     ta.rows = 1;
     ta.oninput = () => autoGrow(ta);
     return ta;
+  }
+
+  function buildTextEditor(value, options = {}) {
+    const shell = document.createElement("div");
+    shell.className = "card-text-shell";
+
+    const preview = document.createElement("div");
+    preview.className = "card-text-preview";
+    preview.tabIndex = 0;
+
+    const ta = buildTextarea(value);
+    const placeholder = options.placeholder || "";
+
+    const setEditing = (editing) => {
+      shell.classList.toggle("is-editing", editing);
+      if (editing) {
+        requestAnimationFrame(() => {
+          ta.focus();
+          autoGrow(ta);
+        });
+      } else {
+        updateLinkedText(preview, ta.value, placeholder || ta.placeholder);
+      }
+    };
+
+    shell.textarea = ta;
+    shell.updatePreview = () => updateLinkedText(preview, ta.value, placeholder || ta.placeholder);
+
+    preview.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;
+      setEditing(true);
+    });
+    preview.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === "F2") {
+        event.preventDefault();
+        setEditing(true);
+      }
+    });
+    ta.addEventListener("blur", () => setEditing(false));
+
+    shell.appendChild(preview);
+    shell.appendChild(ta);
+    shell.updatePreview();
+    setEditing(options.startEditing === true);
+    return shell;
   }
 
   /* Auto-grow textarea */
