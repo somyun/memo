@@ -13,10 +13,14 @@ class MemoWindowManager {
 
     static Open(memoId := "", restoreBounds := true, createIfMissing := false, source := "user") {
         global AppConfig
+        global AppIsShuttingDown
         if (memoId = "") {
             memoId := this.NewMemoId()
             createIfMissing := true
         }
+
+        if AppIsShuttingDown
+            return memoId
 
         if (source != "sync")
             this.manualOpenGrace[memoId] := A_TickCount + 3000
@@ -59,6 +63,10 @@ class MemoWindowManager {
     }
 
     static SyncVisible(items) {
+        global AppIsShuttingDown
+        if AppIsShuttingDown
+            return
+
         keep := Map()
         this.visibleMeta := Map()
         pinChanged := false

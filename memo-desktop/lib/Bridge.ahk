@@ -3,6 +3,10 @@ class Bridge {
     static pending := Map()
 
     static Dispatch(window, msg) {
+        global AppIsShuttingDown
+        if AppIsShuttingDown
+            return
+
         kind := msg.Has("kind") ? msg["kind"] : "event"
         method := msg.Has("method") ? msg["method"] : ""
 

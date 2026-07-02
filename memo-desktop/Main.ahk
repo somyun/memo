@@ -17,11 +17,15 @@ try DllCall("SetProcessDpiAwarenessContext", "ptr", -4)
 #Include "lib\ShowDesktopOverride.ahk"
 
 global AppConfig := Map()
+global AppIsShuttingDown := false
+global AppIsSessionEnding := false
 
 LoadAppConfig()
 WindowStateStore.Load()
 DesktopLayer.Reset()
 ShowDesktopOverride.Start()
+OnMessage(0x0011, HandleQueryEndSession)
+OnMessage(0x0016, HandleEndSession)
 
 ; 트레이
 A_IconTip := "Memo Desktop"
@@ -62,7 +66,42 @@ TestDesktopLayer() {
     MsgBox(result "`n`nWin+D 후에도 메모가 보이면 성공입니다.", "Desktop Layer", "Iconi")
 }
 
-OnExit(*) {
-    ShowDesktopOverride.Stop()
-    WindowStateStore.Save()
+HandleQueryEndSession(wParam, lParam, msg, hwnd) {
+    global AppIsSessionEnding
+    AppIsSessionEnding := true
+    return true
+}
+
+HandleEndSession(wParam, lParam, msg, hwnd) {
+    if wParam {
+        global AppIsSessionEnding
+        AppIsSessionEnding := true
+        PrepareAppShutdown(true)
+    }
+    return 0
+}
+
+PrepareAppShutdown(sessionEnding := false) {
+    global AppIsShuttingDown, AppIsSessionEnding
+    if AppIsShuttingDown
+        return
+
+    AppIsShuttingDown := true
+    AppIsSessionEnding := AppIsSessionEnding || sessionEnding
+
+    try ShowDesktopOverride.Stop(!AppIsSessionEnding)
+    try AppHost.Stop()
+    try ManagerWindow.Stop()
+    try MemoWindowManager.CloseAll()
+    try WindowStateStore.Save()
+    try {
+        MemoWindow.environment := 0
+        MemoWindow.environmentReady := false
+    }
+}
+
+OnExit(exitReason := "", exitCode := 0) {
+    global AppIsSessionEnding
+    sessionEnding := AppIsSessionEnding || exitReason = "Logoff" || exitReason = "Shutdown"
+    PrepareAppShutdown(sessionEnding)
 }

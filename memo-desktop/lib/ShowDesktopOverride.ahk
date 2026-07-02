@@ -23,13 +23,18 @@ class ShowDesktopOverride {
         this.hook := DllCall("SetWindowsHookEx", "int", 14, "ptr", this.hookCb, "ptr", 0, "uint", 0, "ptr")
     }
 
-    static Stop() {
+    static Stop(restoreWindows := true) {
         if !this.started
             return
 
         try Hotkey("#d", "Off")
-        if this.isDesktopShown
+        if restoreWindows && this.isDesktopShown
             this.RestoreWindows()
+        else if this.isDesktopShown {
+            this.touchedWindows := []
+            this.orderSnapshot := []
+            this.isDesktopShown := false
+        }
 
         if this.hook
             DllCall("UnhookWindowsHookEx", "ptr", this.hook)

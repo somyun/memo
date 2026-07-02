@@ -17,6 +17,13 @@ class ManagerWindow {
         this.instance.Open()
     }
 
+    static Stop() {
+        if this.instance {
+            this.instance.Destroy()
+            this.instance := ""
+        }
+    }
+
     Open() {
         MemoWindow.EnsureEnvironment()
 
@@ -90,5 +97,19 @@ class ManagerWindow {
         if !this.wv
             return
         this.wv.PostWebMessageAsJson(JSON.stringify(Map("kind", "response", "id", reqId, "ok", ok, "result", result)))
+    }
+
+    Destroy() {
+        wvc := this.wvc
+        gui := this.gui
+        this.ready := false
+        this.wv := ""
+        this.wvc := ""
+        this.gui := ""
+
+        if wvc
+            try wvc.Close()
+        if gui
+            try gui.Destroy()
     }
 }

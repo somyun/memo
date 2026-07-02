@@ -117,6 +117,46 @@ ComCall(5, taskbar, "ptr", hwnd)     ; DeleteTab(hwnd)
 - `DeleteTab`은 창 자체를 숨기는 API가 아니라 작업표시줄 항목만 제거하는 API다. 따라서 Alt+Tab 유지 여부는 실제 Windows 환경에서 검증해야 한다.
 - 메모마다 매번 COM 객체를 만들기보다 `TaskbarList` 헬퍼 클래스로 한 번 초기화해 재사용하는 편이 낫다.
 
+## 적용 1: TaskbarList 헬퍼
+
+2026-06-29에 `ITaskbarList::DeleteTab(hwnd)` 방식의 1차 구현을 적용했다.
+
+변경 사항:
+
+- `lib/TaskbarList.ahk` 추가
+- `Main.ahk`에서 `TaskbarList.ahk` include
+- `MemoWindow.Show()`에서 offscreen 초기 표시 직후 `DeleteTab(hwnd)` 호출
+- `MemoWindow.Reveal()`에서 실제 표시 직후 `DeleteTab(hwnd)` 재호출
+- `MemoWindow.SetPinnedState()`에서 pin/topmost 변경 직후 `DeleteTab(hwnd)` 재호출
+- Shell이 작업표시줄 버튼을 늦게 등록하는 경우를 대비해 250ms/500ms 지연 재호출 추가
+
+현재 구현 의도:
+
+- `MemoWindow`는 owner 없는 일반 top-level 창 생성 방식을 유지한다.
+- `+Owner`, `+ToolWindow`, `WS_CHILD`, `SetParent`를 사용하지 않는다.
+- 작업표시줄 버튼 제거만 Shell API에 맡긴다.
+- Alt+Tab, z-order, pin/topmost 독립성은 기존 top-level 창 동작에 맡긴다.
+
+검증할 항목:
+
+- 메모 카드가 작업표시줄에서 사라지는지
+- 메모 카드가 Alt+Tab에는 남는지
+- 메모 여러 개가 Alt+Tab에 각각 나오는지
+- `메모1 > 탐색기 > 메모2` 같은 z-order 배치가 유지되는지
+- 메모1만 pin 했을 때 메모2가 같이 움직이거나 topmost가 되지 않는지
+- pin 해제 시 다른 메모의 z-order가 같이 변하지 않는지
+
+검증 결과:
+
+- 작업표시줄 숨김: 성공
+- Alt+Tab 유지: 실패
+- 메모별 z-order 독립성: 성공
+- pin 시 다른 메모가 딸려오지 않음: 성공
+
+판단:
+
+`ITaskbarList::DeleteTab(hwnd)` 단독 방식은 owner 계열보다 z-order와 pin 독립성은 좋지만, 현재 Windows 환경에서는 Alt+Tab 항목도 같이 제거되는 것으로 확인됐다. 따라서 "작업표시줄 숨김 + Alt+Tab 유지" 요구사항을 만족하지 못한다.
+
 ## 참고 문서
 
 - [Microsoft Learn - ITaskbarList interface](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-itaskbarlist)

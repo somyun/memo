@@ -278,6 +278,11 @@ class MemoWindow {
     }
 
     Close() {
+        if !this.gui && !this.wvc && !this.wv {
+            MemoWindowManager.Unregister(this.id)
+            return
+        }
+
         if this._readyTimer {
             SetTimer(this._readyTimer, 0)
             this._readyTimer := ""
@@ -288,11 +293,19 @@ class MemoWindow {
         }
         if this.ready && this.visible
             this.SaveBounds(this.GetBounds())
-        if (this.gui)
-            this.gui.Destroy()
+
+        wvc := this.wvc
+        gui := this.gui
         this.gui := ""
         this.wvc := ""
         this.wv := ""
+        this.ready := false
+        this.visible := false
+
+        if wvc
+            try wvc.Close()
+        if gui
+            try gui.Destroy()
         MemoWindowManager.Unregister(this.id)
     }
 }
