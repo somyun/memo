@@ -277,7 +277,7 @@ class MemoWindow {
         this.wv.PostWebMessageAsJson(JSON.stringify(payload))
     }
 
-    Close() {
+    Close(fast := false) {
         if !this.gui && !this.wvc && !this.wv {
             MemoWindowManager.Unregister(this.id)
             return
@@ -302,9 +302,11 @@ class MemoWindow {
         this.ready := false
         this.visible := false
 
-        if wvc
+        if gui && fast
+            try gui.Destroy()
+        if wvc && !fast
             try wvc.Close()
-        if gui
+        if gui && !fast
             try gui.Destroy()
         MemoWindowManager.Unregister(this.id)
     }

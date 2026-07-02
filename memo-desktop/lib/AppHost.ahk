@@ -18,9 +18,9 @@ class AppHost {
             this.instance.PushEvent("hideAllVisible", Map())
     }
 
-    static Stop() {
+    static Stop(fast := false) {
         if this.instance {
-            this.instance.Destroy()
+            this.instance.Destroy(fast)
             this.instance := ""
         }
     }
@@ -79,16 +79,18 @@ class AppHost {
         this.wv.PostWebMessageAsJson(JSON.stringify(Map("kind", "response", "id", reqId, "ok", ok, "result", result)))
     }
 
-    Destroy() {
+    Destroy(fast := false) {
         wvc := this.wvc
         gui := this.gui
         this.wv := ""
         this.wvc := ""
         this.gui := ""
 
-        if wvc
+        if gui && fast
+            try gui.Destroy()
+        if wvc && !fast
             try wvc.Close()
-        if gui
+        if gui && !fast
             try gui.Destroy()
     }
 }

@@ -215,12 +215,13 @@ function mountHost() {
     setup() {
       let unsub = null;
       let lastSnapshot = null;
+      let listenerStarted = false;
+      let hostConfigReceived = false;
 
       const syncVisible = (snapshot) => {
         lastSnapshot = snapshot;
         const items = snapshot.docs
           .map(normalizeMemo)
-          .filter((memo) => memo.desktopVisible)
           .map((memo) => ({
             id: memo.id,
             bounds: memo.currentDesktopBounds,
@@ -239,11 +240,24 @@ function mountHost() {
         }
       };
 
+      const startVisibleListener = () => {
+        if (listenerStarted || !db) return;
+        listenerStarted = true;
+        unsub = db.collection('memos').where('desktopVisible', '==', true).onSnapshot(syncVisible, (error) => {
+          console.error(error);
+        });
+      };
+
       onMounted(() => {
         Bridge.onMessage((msg) => {
           if (msg?.method === 'hostConfig' && msg.params) {
             applyHostConfig(msg.params);
-            if (lastSnapshot) syncVisible(lastSnapshot);
+            hostConfigReceived = true;
+            if (listenerStarted && lastSnapshot) {
+              syncVisible(lastSnapshot);
+            } else {
+              startVisibleListener();
+            }
           }
           if (msg?.method === 'hideAllVisible') {
             hideAll();
@@ -255,10 +269,14 @@ function mountHost() {
           return;
         }
 
-        unsub = db.collection('memos').onSnapshot(syncVisible, (error) => {
-          console.error(error);
-        });
         Bridge.event('ready', { mode: 'host' });
+        if (!Bridge.isWebView()) {
+          startVisibleListener();
+        } else {
+          setTimeout(() => {
+            if (!hostConfigReceived) startVisibleListener();
+          }, 1500);
+        }
       });
 
       onUnmounted(() => {

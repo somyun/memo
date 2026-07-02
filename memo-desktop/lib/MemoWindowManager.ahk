@@ -6,6 +6,9 @@ class MemoWindowManager {
     static machineKey := ""
     static machineName := ""
     static localInstallId := ""
+    static syncOpenQueue := []
+    static syncOpenTimer := ""
+    static syncOpenGeneration := 0
 
     static NewMemoId() {
         return Format("{:x}{:x}", A_TickCount, Random(0, 0xFFFFFF))
@@ -57,9 +60,9 @@ class MemoWindowManager {
         return memoId
     }
 
-    static Close(memoId) {
+    static Close(memoId, fast := false) {
         if this.windows.Has(memoId)
-            this.windows[memoId].Close()
+            this.windows[memoId].Close(fast)
     }
 
     static SyncVisible(items) {
@@ -67,7 +70,10 @@ class MemoWindowManager {
         if AppIsShuttingDown
             return
 
+        this.syncOpenGeneration += 1
+        generation := this.syncOpenGeneration
         keep := Map()
+        openQueue := []
         this.visibleMeta := Map()
         pinChanged := false
 
@@ -75,14 +81,12 @@ class MemoWindowManager {
             id := item.Has("id") ? item["id"] : item
             keep[id] := true
             this.visibleMeta[id] := item
-            this.Open(id, true, false, "sync")
 
             if this.windows.Has(id) {
-                win := this.windows[id]
-                pinned := item.Has("pinned") ? item["pinned"] : false
-                pinnedAt := item.Has("pinnedAt") ? item["pinnedAt"] : 0
-                if win.SetPinnedState(pinned, pinnedAt)
+                if this.ApplyVisibleMeta(id)
                     pinChanged := true
+            } else {
+                openQueue.Push(id)
             }
         }
 
@@ -97,8 +101,64 @@ class MemoWindowManager {
             }
         }
 
+        if openQueue.Length
+            this.StartSyncOpenQueue(openQueue, generation)
+        else
+            this.CancelSyncOpenQueue()
+
         if pinChanged
             this.ApplyPinnedZOrder()
+    }
+
+    static ApplyVisibleMeta(memoId) {
+        if !this.windows.Has(memoId) || !this.visibleMeta.Has(memoId)
+            return false
+
+        item := this.visibleMeta[memoId]
+        win := this.windows[memoId]
+        pinned := item.Has("pinned") ? item["pinned"] : false
+        pinnedAt := item.Has("pinnedAt") ? item["pinnedAt"] : 0
+        return win.SetPinnedState(pinned, pinnedAt)
+    }
+
+    static StartSyncOpenQueue(queue, generation) {
+        this.CancelSyncOpenQueue()
+        this.syncOpenQueue := queue
+        this.syncOpenTimer := () => MemoWindowManager.ProcessSyncOpenQueue(generation)
+        SetTimer(this.syncOpenTimer, -1)
+    }
+
+    static CancelSyncOpenQueue() {
+        if this.syncOpenTimer
+            SetTimer(this.syncOpenTimer, 0)
+        this.syncOpenQueue := []
+        this.syncOpenTimer := ""
+    }
+
+    static ProcessSyncOpenQueue(generation) {
+        global AppIsShuttingDown
+        if AppIsShuttingDown || generation != this.syncOpenGeneration {
+            this.CancelSyncOpenQueue()
+            return
+        }
+
+        if !this.syncOpenQueue.Length {
+            this.CancelSyncOpenQueue()
+            return
+        }
+
+        memoId := this.syncOpenQueue.RemoveAt(1)
+        if this.visibleMeta.Has(memoId) {
+            this.Open(memoId, true, false, "sync")
+            if this.ApplyVisibleMeta(memoId)
+                this.ApplyPinnedZOrder()
+        }
+
+        if this.syncOpenQueue.Length && generation = this.syncOpenGeneration {
+            SetTimer(this.syncOpenTimer, -90)
+        } else {
+            this.CancelSyncOpenQueue()
+        }
     }
 
     static GetBoundsFor(memoId, restoreBounds := true) {
@@ -269,9 +329,10 @@ class MemoWindowManager {
             this.Open(id, true)
     }
 
-    static CloseAll() {
+    static CloseAll(fast := false) {
+        this.CancelSyncOpenQueue()
         for id, win in this.windows.Clone()
-            win.Close()
+            win.Close(fast)
     }
 
     static IsProtectedHwnd(hwnd) {

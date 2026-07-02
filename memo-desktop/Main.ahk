@@ -26,6 +26,7 @@ DesktopLayer.Reset()
 ShowDesktopOverride.Start()
 OnMessage(0x0011, HandleQueryEndSession)
 OnMessage(0x0016, HandleEndSession)
+OnExit(HandleAppExit)
 
 ; 트레이
 A_IconTip := "Memo Desktop"
@@ -90,9 +91,9 @@ PrepareAppShutdown(sessionEnding := false) {
     AppIsSessionEnding := AppIsSessionEnding || sessionEnding
 
     try ShowDesktopOverride.Stop(!AppIsSessionEnding)
-    try AppHost.Stop()
-    try ManagerWindow.Stop()
-    try MemoWindowManager.CloseAll()
+    try MemoWindowManager.CloseAll(true)
+    try ManagerWindow.Stop(true)
+    try AppHost.Stop(true)
     try WindowStateStore.Save()
     try {
         MemoWindow.environment := 0
@@ -100,7 +101,7 @@ PrepareAppShutdown(sessionEnding := false) {
     }
 }
 
-OnExit(exitReason := "", exitCode := 0) {
+HandleAppExit(exitReason := "", exitCode := 0) {
     global AppIsSessionEnding
     sessionEnding := AppIsSessionEnding || exitReason = "Logoff" || exitReason = "Shutdown"
     PrepareAppShutdown(sessionEnding)
