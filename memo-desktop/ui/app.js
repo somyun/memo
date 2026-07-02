@@ -1,5 +1,9 @@
 const { createApp, ref, computed, onMounted, onUnmounted, nextTick } = Vue;
 
+const GITHUB_OWNER = 'somyun';
+const GITHUB_REPO = 'memo';
+const GITHUB_BRANCH = 'main';
+
 const firebaseConfig = {
   apiKey: 'AIzaSyBdJN2qn4Gox8jpIm8ZfPxzeoIU0G_eA-o',
   authDomain: 'memo-3a7c8.firebaseapp.com',
@@ -12,6 +16,7 @@ const firebaseConfig = {
 let db = null;
 let firebaseInitError = '';
 let desktopHost = { machineKey: 'default', machineName: '', localInstallId: '' };
+let githubToken = null;
 
 function reportClientError(message, extra = {}) {
   try {
@@ -119,6 +124,375 @@ function linkifyText(text) {
     parts.push({ text: value.slice(cursor), href: '' });
   }
   return parts;
+}
+
+function isImageFile(file) {
+  return file?.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file?.name || '');
+}
+
+function fileNameFromUrl(url, fallback = 'attachment') {
+  const clean = String(url || '').split(/[?#]/)[0];
+  const last = clean.slice(clean.lastIndexOf('/') + 1);
+  try {
+    return decodeURIComponent(last) || fallback;
+  } catch {
+    return last || fallback;
+  }
+}
+
+function safeZipName(name, fallback = 'attachment') {
+  return String(name || fallback)
+    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+    .replace(/^\.+$/, fallback)
+    .slice(0, 160) || fallback;
+}
+
+function attachmentItems(images = [], files = []) {
+  return [
+    ...images.map((url, index) => ({
+      kind: 'image',
+      name: `이미지 ${index + 1}`,
+      zipName: fileNameFromUrl(url, `image-${index + 1}.jpg`),
+      url,
+    })),
+    ...files.map((file, index) => ({
+      kind: 'file',
+      name: file.name || fileNameFromUrl(file.url, `file-${index + 1}`),
+      zipName: file.name || fileNameFromUrl(file.url, `file-${index + 1}`),
+      url: file.url,
+    })),
+  ].filter((item) => item.url);
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function desktopConfirm(message, title = 'Memo Desktop') {
+  if (Bridge.isWebView()) {
+    try {
+      const result = await Bridge.request('desktopConfirm', { message, title });
+      return result?.confirmed === true;
+    } catch (error) {
+      console.warn('desktopConfirm failed:', error);
+    }
+  }
+  return confirm(message);
+}
+
+async function desktopMessage(message, title = 'Memo Desktop', icon = 'info') {
+  if (Bridge.isWebView()) {
+    try {
+      await Bridge.request('desktopMessage', { message, title, icon });
+      return;
+    } catch (error) {
+      console.warn('desktopMessage failed:', error);
+    }
+  }
+  alert(message);
+}
+
+async function triggerDownload(blob, fileName) {
+  if (Bridge.isWebView()) {
+    const dataUrl = await blobToDataUrl(blob);
+    return Bridge.request('saveDataUrl', {
+      fileName,
+      dataUrl,
+      title: '첨부 압축파일 저장',
+    });
+  }
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { saved: true };
+}
+
+let crcTable = null;
+
+function getCrcTable() {
+  if (crcTable) return crcTable;
+  crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    crcTable[n] = c >>> 0;
+  }
+  return crcTable;
+}
+
+function crc32(bytes) {
+  const table = getCrcTable();
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    c = table[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  }
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const day = (date.getDate() || 1);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | day;
+  return { time, date: dosDate };
+}
+
+function makeZip(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  const usedNames = new Map();
+  let offset = 0;
+
+  files.forEach((file, index) => {
+    const baseName = safeZipName(file.name, `attachment-${index + 1}`);
+    const seen = usedNames.get(baseName) || 0;
+    usedNames.set(baseName, seen + 1);
+    const name = seen ? baseName.replace(/(\.[^.]*)?$/, `-${seen + 1}$1`) : baseName;
+    const nameBytes = encoder.encode(name);
+    const data = file.data;
+    const crc = crc32(data);
+    const stamp = dosDateTime();
+
+    const local = new Uint8Array(30 + nameBytes.length);
+    const localView = new DataView(local.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0x0800, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint16(10, stamp.time, true);
+    localView.setUint16(12, stamp.date, true);
+    localView.setUint32(14, crc, true);
+    localView.setUint32(18, data.length, true);
+    localView.setUint32(22, data.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    local.set(nameBytes, 30);
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    const centralView = new DataView(central.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0x0800, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint16(12, stamp.time, true);
+    centralView.setUint16(14, stamp.date, true);
+    centralView.setUint32(16, crc, true);
+    centralView.setUint32(20, data.length, true);
+    centralView.setUint32(24, data.length, true);
+    centralView.setUint16(28, nameBytes.length, true);
+    centralView.setUint32(42, offset, true);
+    central.set(nameBytes, 46);
+
+    localParts.push(local, data);
+    centralParts.push(central);
+    offset += local.length + data.length;
+  });
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(8, files.length, true);
+  endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, offset, true);
+
+  return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
+}
+
+async function downloadAttachmentsZip(attachments, zipName, setProgress = () => {}) {
+  if (attachments.length < 2) return;
+  setProgress('첨부 압축 중...');
+
+  const files = [];
+  for (let i = 0; i < attachments.length; i += 1) {
+    const attachment = attachments[i];
+    setProgress(`첨부 다운로드 중... ${i + 1}/${attachments.length}`);
+    const response = await fetch(attachment.url);
+    if (!response.ok) {
+      throw new Error(`${attachment.name} 다운로드 실패 (${response.status})`);
+    }
+    const data = new Uint8Array(await response.arrayBuffer());
+    files.push({ name: attachment.zipName || attachment.name, data });
+  }
+
+  const result = await triggerDownload(makeZip(files), zipName);
+  if (result?.saved === false) {
+    setProgress('');
+    return result;
+  }
+  setProgress(Bridge.isWebView() ? '압축파일 저장됨' : '압축파일 생성됨');
+  return result;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressImage(file, maxDimension = 1600, quality = 0.82) {
+  if (file.size < 500 * 1024) return file;
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    const blobUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      URL.revokeObjectURL(blobUrl);
+
+      let { width, height } = img;
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round(height * (maxDimension / width));
+          width = maxDimension;
+        } else {
+          width = Math.round(width * (maxDimension / height));
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob) => {
+        if (!blob || blob.size >= file.size) {
+          resolve(file);
+          return;
+        }
+        const newName = file.name.replace(/\.\w+$/, '.jpg') || 'image.jpg';
+        resolve(new File([blob], newName, { type: 'image/jpeg' }));
+      }, 'image/jpeg', quality);
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(blobUrl);
+      resolve(file);
+    };
+    img.src = blobUrl;
+  });
+}
+
+async function loadGithubToken() {
+  if (githubToken) return githubToken;
+
+  const docSnap = await requireDb().collection('config').doc('github').get();
+  if (!docSnap.exists) throw new Error('GitHub 토큰 설정 없음');
+
+  const data = docSnap.data() || {};
+  if (!data.token) throw new Error('토큰 없음');
+
+  githubToken = data.token;
+  return githubToken;
+}
+
+async function uploadContentToGithub(fileName, base64Content, message) {
+  const token = await loadGithubToken();
+  const response = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${fileName}`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message,
+        content: base64Content,
+        branch: GITHUB_BRANCH,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+}
+
+async function uploadImageAttachment(file) {
+  const compressed = await compressImage(file);
+  const base64 = await fileToBase64(compressed);
+  const pureBase64 = base64.split(',')[1];
+  const ext = (compressed.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  const fileName = `uploads/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+
+  await uploadContentToGithub(fileName, pureBase64, `Upload image ${fileName}`);
+  return `https://cdn.jsdelivr.net/gh/${GITHUB_OWNER}/${GITHUB_REPO}@${GITHUB_BRANCH}/${fileName}`;
+}
+
+async function uploadFileAttachment(file) {
+  const base64 = await fileToBase64(file);
+  const pureBase64 = base64.split(',')[1];
+  const safeName = file.name.replace(/[^a-zA-Z0-9가-힣._-]/g, '_') || 'attachment';
+  const fileName = `uploads/${Date.now()}_${safeName}`;
+
+  await uploadContentToGithub(fileName, pureBase64, `Upload file ${fileName}`);
+  return {
+    name: file.name || safeName,
+    url: `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${fileName}`,
+  };
+}
+
+function extractGithubPath(url) {
+  let match = String(url || '').match(/\/gh\/[^/]+\/[^@]+@[^/]+\/(.+)$/);
+  if (match) return match[1];
+  match = String(url || '').match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/);
+  return match ? match[1] : null;
+}
+
+async function deleteGithubFile(url) {
+  const filePath = extractGithubPath(url);
+  if (!filePath) return;
+
+  const token = await loadGithubToken();
+  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}?ref=${GITHUB_BRANCH}`;
+  const infoRes = await fetch(apiUrl, {
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github+json',
+    },
+  });
+
+  if (!infoRes.ok) throw new Error(`SHA 조회 실패 (${infoRes.status})`);
+  const info = await infoRes.json();
+
+  const delRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${filePath}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message: `Delete ${filePath}`,
+        sha: info.sha,
+        branch: GITHUB_BRANCH,
+      }),
+    },
+  );
+
+  if (!delRes.ok) throw new Error(`삭제 실패 (${delRes.status})`);
 }
 
 function defaultBounds() {
@@ -355,7 +729,7 @@ function mountManager() {
       };
 
       const deleteMemo = async (memo) => {
-        if (!confirm('이 메모를 삭제할까요?')) return;
+        if (!(await desktopConfirm('이 메모를 삭제할까요?', '메모 삭제'))) return;
         try {
           await requireDb().collection('memos').doc(memo.id).delete();
         } catch (error) {
@@ -474,11 +848,15 @@ function mountMemo(memoId, createIfMissing = false) {
   createApp({
     setup() {
       const text = ref('');
+      const images = ref([]);
+      const files = ref([]);
       const editing = ref(createIfMissing);
       const pinned = ref(false);
       const updated = ref(now());
       const status = ref(firebaseInitError ? `동기화 오류: ${firebaseInitError}` : '동기화 중...');
       const statusError = ref(!!firebaseInitError);
+      const uploadCount = ref(0);
+      const lightboxUrl = ref('');
       let unsub = null;
       let textTimer = null;
       let boundsTimer = null;
@@ -489,6 +867,9 @@ function mountMemo(memoId, createIfMissing = false) {
 
       const footerText = computed(() => status.value || formatDate(updated.value));
       const textParts = computed(() => linkifyText(text.value));
+      const attachments = computed(() => attachmentItems(images.value, files.value));
+      const canDownloadAll = computed(() => attachments.value.length >= 2);
+      const isUploading = computed(() => uploadCount.value > 0);
       const memoRef = db ? db.collection('memos').doc(memoId) : null;
 
       const startEditing = () => {
@@ -510,6 +891,11 @@ function mountMemo(memoId, createIfMissing = false) {
       const setError = (prefix, error) => {
         status.value = `${prefix}: ${errorText(error)}`;
         statusError.value = true;
+      };
+
+      const setStatus = (message, isError = false) => {
+        status.value = message;
+        statusError.value = isError;
       };
 
       const saveText = async () => {
@@ -577,6 +963,128 @@ function mountMemo(memoId, createIfMissing = false) {
         textTimer = setTimeout(saveText, 1000);
       };
 
+      const saveAttachments = async () => {
+        if (!memoRef) {
+          setError('첨부 저장 실패', new Error(firebaseInitError || 'Firestore를 사용할 수 없습니다.'));
+          return;
+        }
+
+        markLocalSave();
+        const ts = now();
+        updated.value = ts;
+        setStatus('첨부 저장 중...');
+
+        try {
+          await memoRef.set({
+            id: memoId,
+            images: images.value,
+            files: files.value,
+            updated: ts,
+            desktopVisible: true,
+            desktopUpdated: ts,
+          }, { merge: true });
+          setStatus('첨부 저장됨');
+          setTimeout(() => {
+            if (status.value === '첨부 저장됨') status.value = '';
+          }, 1200);
+        } catch (error) {
+          setError('첨부 저장 실패', error);
+          console.error(error);
+        }
+      };
+
+      const attachFile = async (file) => {
+        if (!file) return;
+        if (!memoRef) {
+          setError('첨부 실패', new Error(firebaseInitError || 'Firestore를 사용할 수 없습니다.'));
+          return;
+        }
+
+        uploadCount.value += 1;
+        setStatus(isImageFile(file) ? '이미지 업로드 중...' : '파일 업로드 중...');
+
+        try {
+          if (isImageFile(file)) {
+            const url = await uploadImageAttachment(file);
+            images.value = [...images.value, url];
+          } else {
+            const fileObj = await uploadFileAttachment(file);
+            files.value = [...files.value, fileObj];
+          }
+          await saveAttachments();
+        } catch (error) {
+          setError('첨부 실패', error);
+          console.error(error);
+        } finally {
+          uploadCount.value = Math.max(0, uploadCount.value - 1);
+        }
+      };
+
+      const pasteFiles = async (event) => {
+        const clipboardFiles = Array.from(event.clipboardData?.files || []);
+        const itemFiles = Array.from(event.clipboardData?.items || [])
+          .filter((item) => item.kind === 'file')
+          .map((item) => item.getAsFile())
+          .filter(Boolean);
+        const pastedFiles = clipboardFiles.length ? clipboardFiles : itemFiles;
+        if (!pastedFiles.length) return;
+
+        event.preventDefault();
+        for (const file of pastedFiles) {
+          await attachFile(file);
+        }
+      };
+
+      const removeAttachment = async (attachment) => {
+        const target = attachment.kind === 'image' ? '이미지' : `"${attachment.name}" 첨부`;
+        if (!(await desktopConfirm(`${target}를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.`, '첨부 삭제'))) return;
+
+        if (attachment.kind === 'image') {
+          images.value = images.value.filter((url) => url !== attachment.url);
+        } else {
+          files.value = files.value.filter((file) => file.url !== attachment.url);
+        }
+
+        await saveAttachments();
+        deleteGithubFile(attachment.url).catch((error) => console.warn('GitHub 첨부 삭제 실패:', error));
+      };
+
+      const openAttachment = (event, attachment) => {
+        if (attachment.kind !== 'image') return;
+        event.preventDefault();
+        event.stopPropagation();
+        lightboxUrl.value = attachment.url;
+      };
+
+      const closeLightbox = () => {
+        lightboxUrl.value = '';
+      };
+
+      const downloadAllAttachments = async () => {
+        try {
+          const result = await downloadAttachmentsZip(
+            attachments.value,
+            `memo-${memoId}-attachments.zip`,
+            (message) => setStatus(message),
+          );
+          if (result?.saved && Bridge.isWebView()) {
+            await desktopMessage(
+              result.path ? `압축파일을 저장했습니다.\n${result.path}` : '압축파일을 저장했습니다.',
+              '다운로드 완료',
+            );
+          }
+          setTimeout(() => {
+            if (status.value === '압축파일 생성됨' || status.value === '압축파일 저장됨') status.value = '';
+          }, 1600);
+        } catch (error) {
+          setError('압축 다운로드 실패', error);
+          if (Bridge.isWebView()) {
+            await desktopMessage(`압축 다운로드 실패:\n${errorText(error)}`, '다운로드 실패', 'error');
+          }
+          console.error(error);
+        }
+      };
+
       const saveBounds = async () => {
         if (!lastBounds) return;
         try {
@@ -619,7 +1127,7 @@ function mountMemo(memoId, createIfMissing = false) {
       };
 
       const deleteMemo = async () => {
-        if (!confirm('이 메모를 삭제할까요?')) return;
+        if (!(await desktopConfirm('이 메모를 삭제할까요?', '메모 삭제'))) return;
         try {
           if (memoRef) {
             await memoRef.delete();
@@ -676,6 +1184,8 @@ function mountMemo(memoId, createIfMissing = false) {
           if (now() < localSaveUntil) return;
 
           text.value = data.text || '';
+          images.value = Array.isArray(data.images) ? data.images : [];
+          files.value = Array.isArray(data.files) ? data.files : [];
           pinned.value = data.desktopPinned === true;
           updated.value = data.updated || data.created || now();
           status.value = '';
@@ -696,14 +1206,23 @@ function mountMemo(memoId, createIfMissing = false) {
 
       return {
         text,
+        attachments,
+        canDownloadAll,
+        isUploading,
         editing,
         textParts,
         pinned,
         footerText,
         statusError,
+        lightboxUrl,
         startEditing,
         stopEditing,
         scheduleTextSave,
+        pasteFiles,
+        removeAttachment,
+        openAttachment,
+        closeLightbox,
+        downloadAllAttachments,
         togglePinned,
         hideMemo,
         deleteMemo,
@@ -733,6 +1252,7 @@ function mountMemo(memoId, createIfMissing = false) {
             @click="startEditing"
             @keydown.enter.prevent="startEditing"
             @keydown.f2.prevent="startEditing"
+            @paste="pasteFiles"
           >
             <template v-if="text">
               <template v-for="(part, index) in textParts" :key="index">
@@ -754,15 +1274,58 @@ function mountMemo(memoId, createIfMissing = false) {
             class="memo-text memo-text-editor"
             v-model="text"
             @input="scheduleTextSave"
+            @paste="pasteFiles"
             @blur="stopEditing"
             placeholder="메모를 입력하세요"
             spellcheck="false"
           ></textarea>
         </div>
         <div class="memo-footer">
+          <div
+            v-if="attachments.length || isUploading"
+            class="memo-attachments"
+            :class="{ 'has-zip': canDownloadAll }"
+            aria-label="첨부 파일"
+          >
+            <button
+              v-if="canDownloadAll"
+              class="zip-button"
+              type="button"
+              title="첨부 전체 압축 다운로드"
+              @click="downloadAllAttachments"
+            ><span>전체</span><span>다운</span></button>
+            <div class="attachment-list">
+              <div v-if="isUploading" class="attachment-progress">첨부 업로드 중...</div>
+              <div
+                v-for="attachment in attachments"
+                :key="attachment.kind + ':' + attachment.url"
+                class="attachment-row"
+              >
+                <a
+                  class="attachment-link"
+                  :href="attachment.url"
+                  target="_blank"
+                  rel="noopener"
+                  :download="attachment.kind === 'file' ? attachment.name : null"
+                  :title="attachment.kind === 'image' ? '이미지 열기' : attachment.name"
+                  @click="openAttachment($event, attachment)"
+                >{{ attachment.name }}</a>
+                <button
+                  class="attachment-remove"
+                  type="button"
+                  title="첨부 제거"
+                  aria-label="첨부 제거"
+                  @click="removeAttachment(attachment)"
+                >×</button>
+              </div>
+            </div>
+          </div>
           <button class="trash-button" type="button" title="삭제" aria-label="삭제" @click="deleteMemo">
             <img class="trash-icon" src="./assets/trash-can.png" alt="" aria-hidden="true">
           </button>
+        </div>
+        <div v-if="lightboxUrl" class="memo-lightbox" @click="closeLightbox">
+          <img :src="lightboxUrl" alt="첨부 이미지">
         </div>
       </div>
     `,

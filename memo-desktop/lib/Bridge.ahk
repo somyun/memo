@@ -35,6 +35,13 @@ class Bridge {
                 return { ok: true }
             case "getBounds":
                 return { ok: true, data: window.GetBounds() }
+            case "desktopConfirm":
+                return { ok: true, data: this.DesktopConfirm(params) }
+            case "desktopMessage":
+                this.DesktopMessage(params)
+                return { ok: true, data: Map("shown", true) }
+            case "saveDataUrl":
+                return { ok: true, data: this.SaveDataUrl(params) }
             default:
                 return { ok: false, data: Map("error", "unknown method: " method) }
         }
@@ -86,6 +93,75 @@ class Bridge {
         catch {
             try window.Hide()
         }
+    }
+
+    static DesktopConfirm(params) {
+        message := params.Has("message") ? params["message"] : "계속할까요?"
+        title := params.Has("title") ? params["title"] : "Memo Desktop"
+        result := MsgBox(message, title, "YesNo Icon?")
+        return Map("confirmed", result = "Yes")
+    }
+
+    static DesktopMessage(params) {
+        message := params.Has("message") ? params["message"] : ""
+        title := params.Has("title") ? params["title"] : "Memo Desktop"
+        icon := params.Has("icon") ? params["icon"] : "info"
+        options := icon = "error" ? "Icon!" : icon = "warn" ? "Icon!" : "Iconi"
+        MsgBox(message, title, options)
+    }
+
+    static SaveDataUrl(params) {
+        fileName := params.Has("fileName") ? this.SafeFileName(params["fileName"]) : "download.bin"
+        dataUrl := params.Has("dataUrl") ? params["dataUrl"] : ""
+        title := params.Has("title") ? params["title"] : "파일 저장"
+        initialPath := A_Desktop "\" fileName
+        savePath := FileSelect("S16", initialPath, title, "모든 파일 (*.*)")
+
+        if (savePath = "")
+            return Map("saved", false)
+
+        if !RegExMatch(savePath, "\.[^\\/:]+$") {
+            ext := this.ExtensionFromName(fileName)
+            if (ext != "")
+                savePath .= ext
+        }
+
+        try {
+            this.WriteDataUrl(savePath, dataUrl)
+            return Map("saved", true, "path", savePath)
+        } catch as e {
+            MsgBox("파일 저장 실패:`n" e.Message, "Memo Desktop", "Icon!")
+            return Map("saved", false, "error", e.Message)
+        }
+    }
+
+    static SafeFileName(fileName) {
+        safeName := RegExReplace("" fileName, '[\\/:*?"<>|]', "_")
+        safeName := Trim(safeName)
+        return safeName = "" ? "download.bin" : safeName
+    }
+
+    static ExtensionFromName(fileName) {
+        if RegExMatch(fileName, "\.[^.\\/:]+$", &match)
+            return match[0]
+        return ""
+    }
+
+    static WriteDataUrl(path, dataUrl) {
+        if !RegExMatch(dataUrl, "i)^data:[^,]*;base64,(.*)$", &match)
+            throw Error("잘못된 데이터 형식입니다.")
+
+        xml := ComObject("MSXML2.DOMDocument.6.0")
+        node := xml.createElement("base64")
+        node.dataType := "bin.base64"
+        node.text := match[1]
+
+        stream := ComObject("ADODB.Stream")
+        stream.Type := 1
+        stream.Open()
+        stream.Write(node.nodeTypedValue)
+        stream.SaveToFile(path, 2)
+        stream.Close()
     }
 
     static LogEvent(method, params) {

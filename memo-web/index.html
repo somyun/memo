@@ -314,6 +314,26 @@
       color: var(--danger);
     }
 
+    .zip-area {
+      display: flex;
+      justify-content: flex-start;
+    }
+
+    .zip-download-btn {
+      border: 1px solid rgba(0,0,0,0.12);
+      border-radius: 3px;
+      background: rgba(255,255,255,0.45);
+      color: #4d421f;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px 7px;
+      transition: background 0.12s;
+    }
+
+    .zip-download-btn:hover {
+      background: rgba(0,0,0,0.07);
+    }
+
     /* ── Lightbox ── */
     #lightbox {
       display: none;
@@ -445,12 +465,175 @@
     return { id: uid(), text, images, files, pinned: false, created: Date.now(), updated: Date.now() };
   }
 
+  function fileNameFromUrl(url, fallback = "attachment") {
+    const clean = String(url || "").split(/[?#]/)[0];
+    const last = clean.slice(clean.lastIndexOf("/") + 1);
+    try {
+      return decodeURIComponent(last) || fallback;
+    } catch {
+      return last || fallback;
+    }
+  }
+
+  function safeZipName(name, fallback = "attachment") {
+    return String(name || fallback)
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, "_")
+      .replace(/^\.+$/, fallback)
+      .slice(0, 160) || fallback;
+  }
+
+  function memoAttachments(memo) {
+    return [
+      ...(memo.images || []).map((url, index) => ({
+        name: fileNameFromUrl(url, `image-${index + 1}.jpg`),
+        url
+      })),
+      ...(memo.files || []).map((file, index) => ({
+        name: file.name || fileNameFromUrl(file.url, `file-${index + 1}`),
+        url: file.url
+      }))
+    ].filter(item => item.url);
+  }
+
+  function triggerDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  let crcTable = null;
+
+  function getCrcTable() {
+    if (crcTable) return crcTable;
+    crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) {
+        c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      }
+      crcTable[n] = c >>> 0;
+    }
+    return crcTable;
+  }
+
+  function crc32(bytes) {
+    const table = getCrcTable();
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i += 1) {
+      c = table[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  function dosDateTime(date = new Date()) {
+    const year = Math.max(1980, date.getFullYear());
+    const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+    const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | (date.getDate() || 1);
+    return { time, date: dosDate };
+  }
+
+  function makeZip(files) {
+    const encoder = new TextEncoder();
+    const localParts = [];
+    const centralParts = [];
+    const usedNames = new Map();
+    let offset = 0;
+
+    files.forEach((file, index) => {
+      const baseName = safeZipName(file.name, `attachment-${index + 1}`);
+      const seen = usedNames.get(baseName) || 0;
+      usedNames.set(baseName, seen + 1);
+      const name = seen ? baseName.replace(/(\.[^.]*)?$/, `-${seen + 1}$1`) : baseName;
+      const nameBytes = encoder.encode(name);
+      const data = file.data;
+      const crc = crc32(data);
+      const stamp = dosDateTime();
+
+      const local = new Uint8Array(30 + nameBytes.length);
+      const localView = new DataView(local.buffer);
+      localView.setUint32(0, 0x04034b50, true);
+      localView.setUint16(4, 20, true);
+      localView.setUint16(6, 0x0800, true);
+      localView.setUint16(8, 0, true);
+      localView.setUint16(10, stamp.time, true);
+      localView.setUint16(12, stamp.date, true);
+      localView.setUint32(14, crc, true);
+      localView.setUint32(18, data.length, true);
+      localView.setUint32(22, data.length, true);
+      localView.setUint16(26, nameBytes.length, true);
+      local.set(nameBytes, 30);
+
+      const central = new Uint8Array(46 + nameBytes.length);
+      const centralView = new DataView(central.buffer);
+      centralView.setUint32(0, 0x02014b50, true);
+      centralView.setUint16(4, 20, true);
+      centralView.setUint16(6, 20, true);
+      centralView.setUint16(8, 0x0800, true);
+      centralView.setUint16(10, 0, true);
+      centralView.setUint16(12, stamp.time, true);
+      centralView.setUint16(14, stamp.date, true);
+      centralView.setUint32(16, crc, true);
+      centralView.setUint32(20, data.length, true);
+      centralView.setUint32(24, data.length, true);
+      centralView.setUint16(28, nameBytes.length, true);
+      centralView.setUint32(42, offset, true);
+      central.set(nameBytes, 46);
+
+      localParts.push(local, data);
+      centralParts.push(central);
+      offset += local.length + data.length;
+    });
+
+    const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+    const end = new Uint8Array(22);
+    const endView = new DataView(end.buffer);
+    endView.setUint32(0, 0x06054b50, true);
+    endView.setUint16(8, files.length, true);
+    endView.setUint16(10, files.length, true);
+    endView.setUint32(12, centralSize, true);
+    endView.setUint32(16, offset, true);
+
+    return new Blob([...localParts, ...centralParts, end], { type: "application/zip" });
+  }
+
+  async function downloadAttachmentsZip(attachments, zipName) {
+    if (attachments.length < 2) return;
+    setStatus("첨부 압축 중...");
+
+    try {
+      const files = [];
+      for (let i = 0; i < attachments.length; i += 1) {
+        const attachment = attachments[i];
+        setStatus(`첨부 다운로드 중... ${i + 1}/${attachments.length}`);
+        const response = await fetch(attachment.url);
+        if (!response.ok) throw new Error(`${attachment.name} 다운로드 실패 (${response.status})`);
+        files.push({
+          name: attachment.name,
+          data: new Uint8Array(await response.arrayBuffer())
+        });
+      }
+
+      triggerDownload(makeZip(files), zipName);
+      setStatus("압축파일 생성됨");
+      setTimeout(() => setStatus(""), 1600);
+    } catch (err) {
+      console.error(err);
+      setStatus("압축 다운로드 실패: " + err.message);
+    }
+  }
+
   /* ── Load (Firestore 실시간 리스너) ── */
   window.onload = () => {
     setStatus("불러오는 중...");
     db.collection("memos").onSnapshot((snapshot) => {
       memos = snapshot.docs.map(doc => {
         const data = doc.data();
+        if (!Array.isArray(data.images)) data.images = [];
         if (!Array.isArray(data.files)) data.files = [];
         if (typeof data.pinned !== "boolean") data.pinned = false;
         return { ...data, id: doc.id };
@@ -555,10 +738,15 @@
     fileArea.className = "card-files";
     memo.files.forEach(f => fileArea.appendChild(buildFileLink(f, memo)));
 
+    const zipArea = document.createElement("div");
+    zipArea.className = "zip-area";
+    syncZipButton(card, memo, zipArea);
+
     card.appendChild(del);
     card.appendChild(textShell);
     card.appendChild(imgArea);
     card.appendChild(fileArea);
+    card.appendChild(zipArea);
     card.appendChild(dateDiv);
 
     // grow on next tick (after mount)
@@ -572,7 +760,11 @@
     card.className = "card card--empty";
     card.dataset.id = "";
 
-    const textShell = buildTextEditor("", { startEditing: true });
+    const textShell = buildTextEditor("", {
+      startEditing: true,
+      focusOnStart: false,
+      placeholder: "새 메모..."
+    });
     const ta = textShell.textarea;
     ta.placeholder = "새 메모...";
 
@@ -582,9 +774,12 @@
     const fileArea = document.createElement("div");
     fileArea.className = "card-files";
 
+    const zipArea = document.createElement("div");
+    zipArea.className = "zip-area";
+
     // Promote to real card on first input
-    const promote = () => {
-      if (!ta.value.trim() && card.querySelector(".card-images").children.length === 0
+    const promote = (force = false) => {
+      if (!force && !ta.value.trim() && card.querySelector(".card-images").children.length === 0
           && card.querySelector(".card-files").children.length === 0) return;
       const memo = newMemoObj(ta.value);
       memos.push(memo);
@@ -627,6 +822,7 @@
 
       document.getElementById("grid").appendChild(buildEmptyCard());
       scheduleSave(memo);
+      return memo;
     };
 
     const onEmptyInput = () => { promote(); };
@@ -638,8 +834,8 @@
         if (item.kind === "file") {
           e.preventDefault();
           const file = item.getAsFile();
-          promote();
-          const memo = memos[memos.length - 1];
+          if (!file) return;
+          const memo = promote(true);
           if (item.type.startsWith("image/")) {
             uploadImage(file, memo, card);
           } else {
@@ -653,6 +849,7 @@
     card.appendChild(textShell);
     card.appendChild(imgArea);
     card.appendChild(fileArea);
+    card.appendChild(zipArea);
     return card;
   }
 
@@ -677,11 +874,11 @@
     const ta = buildTextarea(value);
     const placeholder = options.placeholder || "";
 
-    const setEditing = (editing) => {
+    const setEditing = (editing, shouldFocus = true) => {
       shell.classList.toggle("is-editing", editing);
       if (editing) {
         requestAnimationFrame(() => {
-          ta.focus();
+          if (shouldFocus) ta.focus();
           autoGrow(ta);
         });
       } else {
@@ -707,7 +904,7 @@
     shell.appendChild(preview);
     shell.appendChild(ta);
     shell.updatePreview();
-    setEditing(options.startEditing === true);
+    setEditing(options.startEditing === true, options.focusOnStart !== false);
     return shell;
   }
 
@@ -736,7 +933,9 @@
     rmBtn.onclick = async () => {
       if (!confirm("이 이미지를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.")) return;
       memo.images = memo.images.filter(u => u !== url);
+      const card = wrap.closest(".card");
       wrap.remove();
+      if (card) syncZipButton(card, memo);
       scheduleSave(memo);
       // GitHub 원본 삭제 (백그라운드)
       deleteGithubFile(url).catch(err => console.warn("GitHub 이미지 삭제 실패:", err));
@@ -770,7 +969,9 @@
     rmBtn.onclick = async () => {
       if (!confirm(`"${fileObj.name}" 첨부를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.`)) return;
       memo.files = memo.files.filter(f => f.url !== fileObj.url);
+      const card = wrap.closest(".card");
       wrap.remove();
+      if (card) syncZipButton(card, memo);
       scheduleSave(memo);
       // GitHub 원본 삭제 (백그라운드)
       deleteGithubFile(fileObj.url).catch(err => console.warn("GitHub 파일 삭제 실패:", err));
@@ -782,6 +983,23 @@
     return wrap;
   }
 
+  function syncZipButton(card, memo, zipArea = null) {
+    const area = zipArea || card.querySelector(".zip-area");
+    if (!area) return;
+
+    area.replaceChildren();
+    const attachments = memoAttachments(memo);
+    if (attachments.length < 2) return;
+
+    const btn = document.createElement("button");
+    btn.className = "zip-download-btn";
+    btn.type = "button";
+    btn.textContent = "전체 다운로드";
+    btn.title = "첨부 전체 압축 다운로드";
+    btn.onclick = () => downloadAttachmentsZip(attachments, `memo-${memo.id}-attachments.zip`);
+    area.appendChild(btn);
+  }
+
   /* ── 통합 Paste handler (이미지 + 파일) ── */
   async function handlePaste(e, memo, card, ta) {
     const items = e.clipboardData?.items || [];
@@ -789,6 +1007,7 @@
       if (item.kind === "file") {
         e.preventDefault();
         const file = item.getAsFile();
+        if (!file) return;
         if (item.type.startsWith("image/")) {
           await uploadImage(file, memo, card);
         } else {
@@ -907,6 +1126,7 @@
       imgWrap.querySelector("img").onclick = () => openLightbox(base64);
 
       ph.replaceWith(imgWrap);
+      syncZipButton(card, memo);
       scheduleSave(memo);
 
     } catch (err) {
@@ -965,6 +1185,7 @@
       if (dateDiv) dateDiv.textContent = formatDate(memo.updated);
 
       ph.replaceWith(buildFileLink(fileObj, memo));
+      syncZipButton(card, memo);
       scheduleSave(memo);
       console.log(`[파일 업로드] ${file.name} (${(file.size/1024).toFixed(0)}KB)`);
 

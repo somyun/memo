@@ -42,7 +42,7 @@ textarea {
 
 .memo-shell {
   display: grid;
-  grid-template-rows: 29px 1fr 36px;
+  grid-template-rows: 29px 1fr auto;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -171,14 +171,114 @@ textarea {
 }
 
 .memo-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
   padding: 5px 8px 6px;
   background: var(--note);
 }
 
+.memo-attachments {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  max-height: 106px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.memo-attachments.has-zip {
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.attachment-list {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.memo-attachments.has-zip .attachment-list {
+  grid-column: 2;
+}
+
+.attachment-row,
+.attachment-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 23px;
+  border: 1px solid rgba(95, 74, 23, 0.13);
+  background: rgba(255, 253, 240, 0.54);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.attachment-progress {
+  display: flex;
+  padding: 0 7px;
+}
+
+.attachment-link {
+  min-width: 0;
+  overflow: hidden;
+  color: #1f5f9e;
+  line-height: 22px;
+  padding: 0 7px;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.attachment-remove {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: rgba(66, 58, 38, 0.48);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.attachment-remove:hover {
+  color: var(--danger);
+}
+
+.zip-button {
+  grid-column: 1;
+  justify-self: start;
+  align-self: stretch;
+  width: 50px;
+  min-height: 52px;
+  border: 1px solid rgba(79, 66, 32, 0.2);
+  border-radius: 4px;
+  background: #fffdf0;
+  color: #4d421f;
+  cursor: pointer;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  padding: 2px 8px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.zip-button:hover {
+  background: #fff0a2;
+}
+
 .trash-button {
+  grid-column: 2;
+  justify-self: end;
   min-width: 44px;
   height: 27px;
   border: 0;
@@ -206,6 +306,23 @@ textarea {
   height: 20px;
   object-fit: contain;
   pointer-events: none;
+}
+
+.memo-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+.memo-lightbox img {
+  display: block;
+  max-width: 94vw;
+  max-height: 94vh;
+  object-fit: contain;
 }
 
 .sync-error {
