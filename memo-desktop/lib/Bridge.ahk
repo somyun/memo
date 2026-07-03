@@ -19,13 +19,21 @@ class Bridge {
         if (kind = "request") {
             result := this.HandleRequest(window, method, msg.Has("params") ? msg["params"] : Map())
             if msg.Has("id") {
-                window.Reply(msg["id"], result.ok, result.Has("data") ? result["data"] : Map())
+                window.Reply(msg["id"], this.ResultValue(result, "ok", false), this.ResultValue(result, "data", Map()))
             }
             return
         }
 
         ; event
         this.HandleEvent(window, method, msg.Has("params") ? msg["params"] : Map())
+    }
+
+    static ResultValue(result, key, defaultValue := "") {
+        if (result is Map)
+            return result.Has(key) ? result[key] : defaultValue
+        if IsObject(result) && HasProp(result, key)
+            return result.%key%
+        return defaultValue
     }
 
     static HandleRequest(window, method, params) {
@@ -99,7 +107,7 @@ class Bridge {
         message := params.Has("message") ? params["message"] : "계속할까요?"
         title := params.Has("title") ? params["title"] : "Memo Desktop"
         result := MsgBox(message, title, "YesNo Icon?")
-        return Map("confirmed", result = "Yes")
+        return Map("confirmed", result = "Yes" ? JSON.true : JSON.false)
     }
 
     static DesktopMessage(params) {

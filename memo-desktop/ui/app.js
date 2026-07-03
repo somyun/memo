@@ -82,6 +82,10 @@ function errorText(error) {
   return error?.message || String(error) || '알 수 없는 오류';
 }
 
+function isBridgeTrue(value) {
+  return value === true || value === 1;
+}
+
 function newMemoId() {
   return now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
@@ -177,7 +181,7 @@ async function desktopConfirm(message, title = 'Memo Desktop') {
   if (Bridge.isWebView()) {
     try {
       const result = await Bridge.request('desktopConfirm', { message, title });
-      return result?.confirmed === true;
+      return isBridgeTrue(result?.confirmed);
     } catch (error) {
       console.warn('desktopConfirm failed:', error);
     }
@@ -861,6 +865,7 @@ function mountMemo(memoId, createIfMissing = false) {
       let textTimer = null;
       let boundsTimer = null;
       let localSaveUntil = 0;
+      let lastLocalUpdated = 0;
       let lastBounds = null;
       let initialized = false;
       let mayCreateMissing = createIfMissing;
@@ -884,8 +889,8 @@ function mountMemo(memoId, createIfMissing = false) {
         editing.value = false;
       };
 
-      const markLocalSave = () => {
-        localSaveUntil = now() + 650;
+      const markLocalSave = (duration = 5000) => {
+        localSaveUntil = now() + duration;
       };
 
       const setError = (prefix, error) => {
@@ -906,6 +911,7 @@ function mountMemo(memoId, createIfMissing = false) {
 
         markLocalSave();
         const ts = now();
+        lastLocalUpdated = ts;
         updated.value = ts;
         status.value = '저장 중...';
         statusError.value = false;
@@ -935,6 +941,7 @@ function mountMemo(memoId, createIfMissing = false) {
 
         const nextPinned = !pinned.value;
         const ts = now();
+        lastLocalUpdated = ts;
         pinned.value = nextPinned;
         status.value = nextPinned ? '상단 고정됨' : '고정 해제됨';
         statusError.value = false;
@@ -966,31 +973,39 @@ function mountMemo(memoId, createIfMissing = false) {
       const saveAttachments = async () => {
         if (!memoRef) {
           setError('첨부 저장 실패', new Error(firebaseInitError || 'Firestore를 사용할 수 없습니다.'));
-          return;
+          return false;
         }
 
         markLocalSave();
         const ts = now();
+        lastLocalUpdated = ts;
         updated.value = ts;
         setStatus('첨부 저장 중...');
 
+        let saved = false;
         try {
           await memoRef.set({
             id: memoId,
-            images: images.value,
-            files: files.value,
+            images: [...images.value],
+            files: files.value.map((file) => ({
+              name: file?.name || fileNameFromUrl(file?.url, 'attachment'),
+              url: file?.url || '',
+            })).filter((file) => file.url),
             updated: ts,
             desktopVisible: true,
             desktopUpdated: ts,
           }, { merge: true });
+          saved = true;
           setStatus('첨부 저장됨');
           setTimeout(() => {
             if (status.value === '첨부 저장됨') status.value = '';
           }, 1200);
         } catch (error) {
           setError('첨부 저장 실패', error);
+          lastLocalUpdated = 0;
           console.error(error);
         }
+        return saved;
       };
 
       const attachFile = async (file) => {
@@ -1039,13 +1054,22 @@ function mountMemo(memoId, createIfMissing = false) {
         const target = attachment.kind === 'image' ? '이미지' : `"${attachment.name}" 첨부`;
         if (!(await desktopConfirm(`${target}를 삭제할까요?\nGitHub에 업로드된 파일도 함께 삭제됩니다.`, '첨부 삭제'))) return;
 
+        const previousImages = [...images.value];
+        const previousFiles = files.value.map((file) => ({ ...file }));
+
         if (attachment.kind === 'image') {
           images.value = images.value.filter((url) => url !== attachment.url);
         } else {
           files.value = files.value.filter((file) => file.url !== attachment.url);
         }
 
-        await saveAttachments();
+        const saved = await saveAttachments();
+        if (!saved) {
+          images.value = previousImages;
+          files.value = previousFiles;
+          return;
+        }
+
         deleteGithubFile(attachment.url).catch((error) => console.warn('GitHub 첨부 삭제 실패:', error));
       };
 
@@ -1181,7 +1205,11 @@ function mountMemo(memoId, createIfMissing = false) {
 
           initialized = true;
           const data = snap.data() || {};
-          if (now() < localSaveUntil) return;
+          const localWriteActive = now() < localSaveUntil;
+          const staleLocalWriteSnapshot = lastLocalUpdated
+            && (data.updated || 0) < lastLocalUpdated
+            && now() < lastLocalUpdated + 10000;
+          if (localWriteActive || staleLocalWriteSnapshot) return;
 
           text.value = data.text || '';
           images.value = Array.isArray(data.images) ? data.images : [];
