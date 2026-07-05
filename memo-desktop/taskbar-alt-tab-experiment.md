@@ -62,15 +62,17 @@ this.gui := Gui("-Caption +Resize +MinSize250x160 +Owner" this.ownerGui.Hwnd, "M
 
 메모별 owner를 분리하면 공유 owner보다 z-order 독립성은 개선되지만, Alt+Tab 노출 요구를 깨뜨린다. 또한 owned window 관계 자체가 pin/unpin 시 owner-chain z-order를 계속 건드리는 것으로 보인다. 이 방식도 채택하기 어렵다.
 
-## 현재 코드 상태
+## 현재 기본 코드 상태
 
-owner 계열 실험 코드는 모두 원복했다.
+기본 실행 경로에서는 owner 계열 실험 코드를 사용하지 않는다.
 
-현재 `MemoWindow`는 다시 owner 없는 일반 top-level 창으로 생성된다.
+`MemoWindow`는 owner 없는 일반 top-level 창으로 생성된다.
 
 ```ahk
 this.gui := Gui("-Caption +Resize +MinSize250x160", "Memo " this.id)
 ```
+
+실패한 owner/TaskbarList 실험 코드는 현재 작업트리에 남기지 않는다.
 
 ## 다음 후보: ITaskbarList::DeleteTab
 
@@ -156,6 +158,96 @@ ComCall(5, taskbar, "ptr", hwnd)     ; DeleteTab(hwnd)
 판단:
 
 `ITaskbarList::DeleteTab(hwnd)` 단독 방식은 owner 계열보다 z-order와 pin 독립성은 좋지만, 현재 Windows 환경에서는 Alt+Tab 항목도 같이 제거되는 것으로 확인됐다. 따라서 "작업표시줄 숨김 + Alt+Tab 유지" 요구사항을 만족하지 못한다.
+
+## 실험 3: 메모별 숨은 owner, owner에서 `+ToolWindow` 제거
+
+2026-07-05에 실험 2에서 남아 있던 변수를 분리해 확인했다.
+
+실험 2는 메모 창에 `+Owner`를 붙인 동시에, 숨은 owner 창을 다음처럼 `+ToolWindow`로 만들었다.
+
+```ahk
+this.ownerGui := Gui("-Caption +ToolWindow", "Memo Owner " this.id)
+this.gui := Gui("-Caption +Resize +MinSize250x160 +Owner" this.ownerGui.Hwnd, "Memo " this.id)
+```
+
+따라서 Alt+Tab 실패 원인이 다음 둘 중 어느 쪽인지 아직 분리되지 않았다.
+
+- owned window 관계 자체 때문에 Alt+Tab에서 빠진 것
+- owner chain 어딘가에 `WS_EX_TOOLWINDOW`가 섞였기 때문에 Alt+Tab에서 빠진 것
+
+이번 실험은 숨은 owner 창에서만 `+ToolWindow`를 제거했다.
+
+```ahk
+this.ownerGui := Gui("-Caption", "Memo Owner " this.id)
+this.ownerGui.Show("Hide x-32000 y-32000 w1 h1 NoActivate")
+this.gui := Gui("-Caption +Resize +MinSize250x160 +Owner" this.ownerGui.Hwnd, "Memo " this.id)
+```
+
+검증 결과:
+
+- 작업표시줄 숨김: 실패
+- 작업표시줄 hover 시 창 썸네일 미표시: 발생
+- 메모 창은 작업표시줄에 여전히 표시됨
+
+판단:
+
+숨은 owner의 `+ToolWindow`를 제거해도 목표였던 작업표시줄 숨김은 달성되지 않았다. 달라진 것은 작업표시줄 hover 썸네일이 나오지 않는 정도였고, 작업표시줄 항목 자체는 남았다. 따라서 이 방식도 "작업표시줄 숨김 + Alt+Tab 유지" 요구사항을 만족하지 못한다.
+
+## 실험 4: 숨은 owner + `DeleteTab` 병행
+
+실험 3은 숨은 owner에서 `+ToolWindow`만 제거한 형태였고, 작업표시줄 항목 자체는 남았다. 실험 4는 같은 owner 구조에서 Shell의 `ITaskbarList::DeleteTab`을 함께 호출해, 작업표시줄 항목만 제거되면서 Alt+Tab 자격은 owner 관계 쪽에 남는지 확인한다.
+
+적용 형태:
+
+```ahk
+this.ownerGui := Gui("-Caption", "Memo Owner " this.id)
+this.ownerGui.Show("Hide x-32000 y-32000 w1 h1 NoActivate")
+this.gui := Gui("-Caption +Resize +MinSize250x160 +Owner" this.ownerGui.Hwnd, "Memo " this.id)
+TaskbarList.DeleteTab(this.ownerGui.Hwnd)
+TaskbarList.DeleteTab(this.gui.Hwnd)
+```
+
+구현 메모:
+
+- `lib/TaskbarList.ahk`를 다시 추가해 `ITaskbarList::DeleteTab(hwnd)`만 얇게 감싼다.
+- `Main.ahk`에서 `TaskbarList.ahk`를 include한다.
+- `MemoWindow`는 `taskbarAltTabExperiment = "ownerNoToolWindowDeleteTab"`일 때만 숨은 owner를 만든다.
+- `Show`, `Reveal`, `SetPinnedState` 이후 `ownerGui.Hwnd`와 `gui.Hwnd` 양쪽에 `DeleteTab`을 호출한다.
+- Shell의 지연 등록을 대비해 `Reveal` 이후 250ms/500ms 지연 재호출을 둔다.
+- 숨은 owner는 `Close()`에서 메모 창과 함께 명시적으로 파괴한다.
+
+검증할 항목:
+
+- 메모 카드가 작업표시줄에서 사라지는지
+- 메모 카드가 Alt+Tab에는 남는지
+- 메모 여러 개가 Alt+Tab에 각각 나오는지
+- `메모1 > 탐색기 > 메모2` 같은 z-order 배치가 유지되는지
+- 한 메모만 pin 했을 때 다른 메모가 같이 움직이거나 topmost가 되지 않는지
+- pin 해제 시 다른 메모의 z-order가 같이 변하지 않는지
+
+검증 결과:
+
+- 작업표시줄 숨김: 핵심 판단에서 제외. Alt+Tab/z-order 실패로 채택 불가.
+- Alt+Tab 유지: 실패
+- z-order 복구: 실패. 창 복구 시 이전 z-order가 완전하게 복구되지 않았다.
+
+판단:
+
+`DeleteTab`을 숨은 owner 구조와 병행해도 Alt+Tab 노출 요구를 만족하지 못했다. 또한 z-order 복구도 안정적이지 않아 기존 owner 계열 실험의 핵심 부작용이 남았다. 따라서 실험 4도 채택하지 않는다.
+
+## 최종 방침
+
+2026-07-05 기준으로 "작업표시줄 숨김 + Alt+Tab 유지 + z-order/pin 독립성"을 동시에 만족하는 Win32/AHK 조합을 찾지 못했다.
+
+당분간 작업표시줄 숨김 요구는 포기하고, 다음 동작을 우선한다.
+
+- 메모 카드는 owner 없는 일반 top-level 창으로 유지한다.
+- Alt+Tab 노출은 유지한다.
+- 메모별 z-order 독립성을 유지한다.
+- pin/topmost 동작이 다른 메모를 끌고 오지 않게 한다.
+- `desktopLayer:false` 상태의 안정적인 일반 창 모델을 유지한다.
+
+따라서 현재 코드에서는 `+Owner`, `+ToolWindow`, `ITaskbarList::DeleteTab`, `SetParent`/`WS_CHILD` 방식 모두 사용하지 않는다.
 
 ## 참고 문서
 
