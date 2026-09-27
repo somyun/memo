@@ -80,9 +80,11 @@
     }
 
     .app-shell[hidden],
-    .auth-screen[hidden] { display: none; }
+    .auth-screen[hidden],
+    .auth-pending[hidden] { display: none; }
 
-    .auth-screen {
+    .auth-screen,
+    .auth-pending {
       position: fixed;
       inset: 0;
       z-index: 200;
@@ -103,7 +105,7 @@
     .auth-card h2 { margin-bottom: 8px; font-size: 21px; }
     .auth-card p { margin-bottom: 22px; color: #777; font-size: 13px; line-height: 1.55; }
     .auth-card label { display: block; margin-top: 12px; color: #555; font-size: 12px; }
-    .auth-card input {
+    .auth-card input:not([type="checkbox"]) {
       width: 100%;
       margin-top: 5px;
       padding: 10px 11px;
@@ -111,6 +113,25 @@
       border-radius: 3px;
       background: #fff;
       font: inherit;
+    }
+    .auth-card .persistence-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .auth-card .persistence-option input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #423a26;
+    }
+    .auth-card .persistence-help {
+      margin: 6px 0 0 24px;
+      color: #888;
+      font-size: 11px;
     }
     .auth-card button[type="submit"] {
       width: 100%;
@@ -412,13 +433,22 @@
 </head>
 <body>
 
-<section class="auth-screen" id="auth-screen" aria-labelledby="auth-title">
+<section class="auth-pending" id="auth-pending" aria-live="polite">
+  <p>인증 상태 확인 중...</p>
+</section>
+
+<section class="auth-screen" id="auth-screen" aria-labelledby="auth-title" hidden>
   <form class="auth-card" id="login-form">
-    <h2 id="auth-title">기기 인증</h2>
-    <p>개발자 계정으로 한 번 로그인하면 이 브라우저에서는 계속 인증 상태가 유지됩니다.</p>
+    <h2 id="auth-title">로그인</h2>
+    <p>메모에 접근하려면 개발자 계정으로 로그인하세요.</p>
     <label>이메일<input id="login-email" type="email" autocomplete="username" required></label>
     <label>비밀번호<input id="login-password" type="password" autocomplete="current-password" required></label>
-    <button type="submit" id="login-button">로그인하고 이 기기 인증</button>
+    <label class="persistence-option">
+      <input id="keep-signed-in" type="checkbox" checked>
+      <span>이 기기에서 로그인 상태 유지</span>
+    </label>
+    <p class="persistence-help">공용 PC에서는 체크를 해제하세요. 브라우저를 닫으면 인증이 만료됩니다.</p>
+    <button type="submit" id="login-button">로그인</button>
     <p class="auth-error" id="auth-error" role="alert"></p>
   </form>
 </section>
@@ -426,7 +456,7 @@
 <div class="app-shell" id="app-shell" hidden>
   <header>
     <h1>memo</h1>
-    <div><span id="status"></span><button class="device-signout" id="device-signout" type="button">이 기기 인증 해제</button></div>
+    <div><span id="status"></span><button class="device-signout" id="device-signout" type="button">로그아웃</button></div>
   </header>
   <div class="grid" id="grid"></div>
 </div>
@@ -744,6 +774,7 @@
   }
 
   function showLogin(message = "") {
+    document.getElementById("auth-pending").hidden = true;
     document.getElementById("app-shell").hidden = true;
     document.getElementById("auth-screen").hidden = false;
     document.getElementById("auth-error").textContent = message;
@@ -751,6 +782,7 @@
   }
 
   function showApp() {
+    document.getElementById("auth-pending").hidden = true;
     document.getElementById("auth-screen").hidden = true;
     document.getElementById("app-shell").hidden = false;
     startMemoApp();
@@ -763,7 +795,11 @@
     button.disabled = true;
     errorBox.textContent = "인증 중...";
     try {
-      await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      const keepSignedIn = document.getElementById("keep-signed-in").checked;
+      const persistence = keepSignedIn
+        ? firebase.auth.Auth.Persistence.LOCAL
+        : firebase.auth.Auth.Persistence.SESSION;
+      await auth.setPersistence(persistence);
       const credential = await auth.signInWithEmailAndPassword(
         document.getElementById("login-email").value.trim(),
         document.getElementById("login-password").value
@@ -780,7 +816,7 @@
   });
 
   document.getElementById("device-signout").addEventListener("click", async () => {
-    if (!confirm("이 브라우저의 기기 인증을 해제할까요? 다음 접속부터 다시 로그인해야 합니다.")) return;
+    if (!confirm("로그아웃할까요? 다음 접속부터 다시 로그인해야 합니다.")) return;
     await auth.signOut();
     location.reload();
   });
