@@ -68,6 +68,63 @@
       transition: opacity 0.3s;
     }
 
+    .device-signout {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 11px;
+      margin-left: 12px;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .app-shell[hidden],
+    .auth-screen[hidden] { display: none; }
+
+    .auth-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--bg);
+    }
+
+    .auth-card {
+      width: min(100%, 360px);
+      padding: 28px;
+      border: 1px solid var(--card-border);
+      background: #fffdf5;
+      box-shadow: var(--card-shadow);
+    }
+
+    .auth-card h2 { margin-bottom: 8px; font-size: 21px; }
+    .auth-card p { margin-bottom: 22px; color: #777; font-size: 13px; line-height: 1.55; }
+    .auth-card label { display: block; margin-top: 12px; color: #555; font-size: 12px; }
+    .auth-card input {
+      width: 100%;
+      margin-top: 5px;
+      padding: 10px 11px;
+      border: 1px solid #cfc8b9;
+      border-radius: 3px;
+      background: #fff;
+      font: inherit;
+    }
+    .auth-card button[type="submit"] {
+      width: 100%;
+      margin-top: 20px;
+      padding: 10px;
+      border: 0;
+      border-radius: 3px;
+      background: #423a26;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+    }
+    .auth-error { min-height: 18px; margin: 10px 0 0 !important; color: var(--danger) !important; }
+
     /* ── Grid ── */
     .grid {
       position: relative;
@@ -350,16 +407,29 @@
     #lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain; }
   </style>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
 
-<header>
-  <h1>memo</h1>
-  <div id="status"></div>
-</header>
+<section class="auth-screen" id="auth-screen" aria-labelledby="auth-title">
+  <form class="auth-card" id="login-form">
+    <h2 id="auth-title">기기 인증</h2>
+    <p>개발자 계정으로 한 번 로그인하면 이 브라우저에서는 계속 인증 상태가 유지됩니다.</p>
+    <label>이메일<input id="login-email" type="email" autocomplete="username" required></label>
+    <label>비밀번호<input id="login-password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" id="login-button">로그인하고 이 기기 인증</button>
+    <p class="auth-error" id="auth-error" role="alert"></p>
+  </form>
+</section>
 
-<div class="grid" id="grid"></div>
+<div class="app-shell" id="app-shell" hidden>
+  <header>
+    <h1>memo</h1>
+    <div><span id="status"></span><button class="device-signout" id="device-signout" type="button">이 기기 인증 해제</button></div>
+  </header>
+  <div class="grid" id="grid"></div>
+</div>
 
 <div id="lightbox">
   <img id="lightbox-img" src="" alt="">
@@ -381,6 +451,7 @@
     messagingSenderId: "674466200117",
     appId: "1:674466200117:web:02cb1572cd0a2597ffcf7c"
   });
+  const auth = firebase.auth();
   const db = firebase.firestore();
   /* ═══════════════════════════════════════ */
 
@@ -628,7 +699,9 @@
   }
 
   /* ── Load (Firestore 실시간 리스너) ── */
-  window.onload = () => {
+  function startMemoApp() {
+    if (startMemoApp.started) return;
+    startMemoApp.started = true;
     setStatus("불러오는 중...");
     db.collection("memos").onSnapshot((snapshot) => {
       memos = snapshot.docs.map(doc => {
@@ -654,7 +727,80 @@
       setStatus("연결 실패: " + error.message);
       renderAll();
     });
-  };
+  }
+
+  function authErrorMessage(error) {
+    const code = error?.code || "";
+    if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+      return "이메일 또는 비밀번호가 올바르지 않습니다.";
+    }
+    if (code === "auth/too-many-requests") return "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.";
+    return error?.message || "로그인에 실패했습니다.";
+  }
+
+  async function isAuthorizedUser(user) {
+    const access = await db.collection("authorizedUsers").doc(user.uid).get();
+    return access.exists;
+  }
+
+  function showLogin(message = "") {
+    document.getElementById("app-shell").hidden = true;
+    document.getElementById("auth-screen").hidden = false;
+    document.getElementById("auth-error").textContent = message;
+    document.getElementById("login-password").value = "";
+  }
+
+  function showApp() {
+    document.getElementById("auth-screen").hidden = true;
+    document.getElementById("app-shell").hidden = false;
+    startMemoApp();
+  }
+
+  document.getElementById("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = document.getElementById("login-button");
+    const errorBox = document.getElementById("auth-error");
+    button.disabled = true;
+    errorBox.textContent = "인증 중...";
+    try {
+      await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      const credential = await auth.signInWithEmailAndPassword(
+        document.getElementById("login-email").value.trim(),
+        document.getElementById("login-password").value
+      );
+      if (!(await isAuthorizedUser(credential.user))) {
+        await auth.signOut();
+        throw new Error("이 계정은 메모 접근 허용 목록에 없습니다.");
+      }
+    } catch (error) {
+      errorBox.textContent = authErrorMessage(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  document.getElementById("device-signout").addEventListener("click", async () => {
+    if (!confirm("이 브라우저의 기기 인증을 해제할까요? 다음 접속부터 다시 로그인해야 합니다.")) return;
+    await auth.signOut();
+    location.reload();
+  });
+
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      showLogin();
+      return;
+    }
+    try {
+      if (await isAuthorizedUser(user)) {
+        showApp();
+      } else {
+        await auth.signOut();
+        showLogin("이 계정은 메모 접근 허용 목록에 없습니다.");
+      }
+    } catch (error) {
+      showLogin(`접근 권한 확인 실패: ${error.message}`);
+    }
+  });
 
   /* ── Save (개별 메모 단위, debounced) ── */
   function scheduleSave(memo) {
