@@ -277,6 +277,48 @@
     .card:focus-within .delete-btn { opacity: 1; }
     .delete-btn:hover { color: var(--danger); }
 
+    /* ── Attach button / drag & drop ── */
+    .attach-btn {
+      position: absolute;
+      top: 5px;
+      right: 26px;
+      background: none;
+      border: none;
+      font-size: 13px;
+      cursor: pointer;
+      line-height: 1;
+      padding: 2px 4px;
+      opacity: 0;
+      filter: grayscale(1);
+      transition: opacity 0.12s, filter 0.12s;
+      z-index: 2;
+    }
+    .card--empty .attach-btn { right: 7px; }
+    .card:hover .attach-btn,
+    .card:focus-within .attach-btn { opacity: 0.7; }
+    .attach-btn:hover { opacity: 1 !important; filter: none; }
+    @media (hover: none) {
+      .attach-btn, .delete-btn { opacity: 0.7; }
+    }
+
+    .card.drag-over {
+      outline: 2px dashed #8a7a3a;
+      outline-offset: -6px;
+    }
+    .card.drag-over::after {
+      content: '여기에 놓으면 첨부';
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.55);
+      font-size: 13px;
+      color: #5a4f20;
+      pointer-events: none;
+      z-index: 3;
+    }
+
     /* ── Images ── */
     .card-images { display: flex; flex-direction: column; gap: 6px; }
 
@@ -925,6 +967,7 @@
     syncZipButton(card, memo, zipArea);
 
     card.appendChild(del);
+    addAttachControls(card, () => memo);
     card.appendChild(textShell);
     card.appendChild(imgArea);
     card.appendChild(fileArea);
@@ -960,10 +1003,13 @@
     zipArea.className = "zip-area";
 
     // Promote to real card on first input
+    let promotedMemo = null;
     const promote = (force = false) => {
+      if (promotedMemo) return promotedMemo;
       if (!force && !ta.value.trim() && card.querySelector(".card-images").children.length === 0
           && card.querySelector(".card-files").children.length === 0) return;
       const memo = newMemoObj(ta.value);
+      promotedMemo = memo;
       memos.push(memo);
 
       card.className = "card";
@@ -1010,7 +1056,10 @@
     const onEmptyInput = () => { promote(); };
     ta.addEventListener("input", onEmptyInput);
     ta.addEventListener("paste", e => {
+      // after promotion, handlePaste takes over
+      if (promotedMemo) return;
       // if file/image is pasted into empty card, promote first
+      warnIfFileNotReceived(e);
       const items = e.clipboardData?.items || [];
       for (const item of items) {
         if (item.kind === "file") {
@@ -1028,12 +1077,98 @@
       }
     });
 
+    addAttachControls(card, () => promote(true));
     card.appendChild(textShell);
     card.appendChild(imgArea);
     card.appendChild(fileArea);
     card.appendChild(zipArea);
     return card;
   }
+
+  /* ── 📎 파일 선택 버튼 + 끌어다 놓기 ── */
+  function addAttachControls(card, getMemo) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.hidden = true;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "attach-btn";
+    btn.textContent = "📎";
+    btn.title = "파일 첨부 (끌어다 놓기도 가능)";
+    btn.onclick = () => input.click();
+
+    input.onchange = () => {
+      const files = [...input.files];
+      input.value = "";
+      if (files.length) uploadFiles(files, getMemo(), card);
+    };
+
+    const hasFiles = e => [...(e.dataTransfer?.types || [])].includes("Files");
+    let depth = 0;
+    card.addEventListener("dragenter", e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth += 1;
+      card.classList.add("drag-over");
+    });
+    card.addEventListener("dragover", e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    card.addEventListener("dragleave", e => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) card.classList.remove("drag-over");
+    });
+    card.addEventListener("drop", e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      card.classList.remove("drag-over");
+      const files = [...e.dataTransfer.files];
+      if (files.length) {
+        uploadFiles(files, getMemo(), card);
+      } else {
+        setStatus("끌어다 놓은 항목에서 파일을 받지 못했습니다.");
+      }
+    });
+
+    card.appendChild(btn);
+    card.appendChild(input);
+  }
+
+  async function uploadFiles(files, memo, card) {
+    for (const file of files) {
+      if (file.type.startsWith("image/")) {
+        await uploadImage(file, memo, card);
+      } else {
+        await uploadFile(file, memo, card);
+      }
+    }
+  }
+
+  /* 붙여넣기에 파일 데이터 없이 주소만 온 경우 안내 */
+  function warnIfFileNotReceived(e) {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const types = [...dt.types];
+    if (types.includes("Files")) return;
+    if (!types.includes("text/uri-list")) return;
+    if (!/^file:/im.test(dt.getData("text/uri-list") || "")) return;
+    e.preventDefault();
+    setStatus("붙여넣기로 파일을 받지 못했습니다. 카드에 끌어다 놓거나 📎 버튼을 사용하세요.");
+    setTimeout(() => setStatus(""), 6000);
+  }
+
+  // 카드 밖에 파일을 떨어뜨려도 브라우저가 파일을 열어버리지 않도록
+  ["dragover", "drop"].forEach(type => {
+    window.addEventListener(type, e => {
+      if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault();
+    });
+  });
 
   /* Shared textarea builder */
   function buildTextarea(value) {
@@ -1184,6 +1319,7 @@
 
   /* ── 통합 Paste handler (이미지 + 파일) ── */
   async function handlePaste(e, memo, card, ta) {
+    warnIfFileNotReceived(e);
     const items = e.clipboardData?.items || [];
     for (const item of items) {
       if (item.kind === "file") {
